@@ -1,0 +1,37 @@
+{
+  "rules": [
+    {
+      "rulePriority": 1,
+      "description": "Remove untagged images after one day",
+      "selection": {
+        "tagStatus": "untagged",
+        "countType": "sinceImagePushed",
+        "countUnit": "days",
+        "countNumber": 1
+      },
+      "action": {"type": "expire"}
+    },
+    {
+      "rulePriority": 2,
+      "description": "Keep the latest ten release images (date tags only, so backup-* is never pruned)",
+      "selection": {
+        "tagStatus": "tagged",
+        "tagPatternList": ["20*"],
+        "countType": "imageCountMoreThan",
+        "countNumber": 10
+      },
+      "action": {"type": "expire"}
+    },
+    {
+      "rulePriority": 3,
+      "description": "Keep the latest twenty CI images (ci-<sha> tags pushed by .gitlab-ci.yml)",
+      "selection": {
+        "tagStatus": "tagged",
+        "tagPatternList": ["ci-*"],
+        "countType": "imageCountMoreThan",
+        "countNumber": 20
+      },
+      "action": {"type": "expire"}
+    }
+  ]
+}

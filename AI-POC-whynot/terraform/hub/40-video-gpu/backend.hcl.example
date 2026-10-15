@@ -1,0 +1,17 @@
+# terraform init -backend-config=backend.hcl
+#
+# bootstrap 레이어의 output backend_hcl 이 bucket 값을 알려준다.
+# 버킷명에 계정 ID 가 들어가므로 실제 값은 backend.hcl 에만 두고 추적하지 않는다.
+
+bucket = "ai-poc-tfstate-<account_id>-<region>"
+key    = "hub/40-video-gpu-<environment>.tfstate"
+region = "ap-northeast-2"
+
+# [필수·실측으로 확인] backend 는 provider 블록의 profile 을 읽지 않는다.
+# 별도 자격증명 체인을 타므로 이것이 없으면 default 프로필로 붙는다.
+# 이 워크스페이스의 default 는 원본 계정을 가리켜 403 Forbidden 이 난다.
+# 증상이 "Error refreshing state: ... HeadObject ... StatusCode: 403" 이다.
+profile = "ai-poc-hub"
+
+encrypt      = true
+use_lockfile = true

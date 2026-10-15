@@ -1,0 +1,13 @@
+[
+  {
+    "IpProtocol": "tcp",
+    "FromPort": 8182,
+    "ToPort": 8182,
+    "UserIdGroupPairs": [
+      {
+        "GroupId": "sg-018eb358973975d64",
+        "Description": "EKS pods (cluster security group) to Neptune"
+      }
+    ]
+  }
+]

@@ -1,0 +1,16 @@
+{
+  "Rules": [
+    {
+      "ID": "AbortIncompleteMultipartUploads",
+      "Status": "Enabled",
+      "Filter": {"Prefix": ""},
+      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1}
+    },
+    {
+      "ID": "ExpireTemporaryBuildArtifacts",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "_build/"},
+      "Expiration": {"Days": 1}
+    }
+  ]
+}

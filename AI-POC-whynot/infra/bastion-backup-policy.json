@@ -1,0 +1,18 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "WriteEcrBackupArtifacts",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject"],
+      "Resource": "arn:aws:s3:::mtx-test-ai-change-toon/_backup/*"
+    },
+    {
+      "Sid": "ListBackupPrefix",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": "arn:aws:s3:::mtx-test-ai-change-toon",
+      "Condition": {"StringLike": {"s3:prefix": ["_backup/*"]}}
+    }
+  ]
+}

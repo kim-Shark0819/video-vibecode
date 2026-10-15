@@ -1,0 +1,60 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "InvokeFoundationModelsInOwnAccount",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:StartAsyncInvoke"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*::foundation-model/*",
+        "arn:aws:bedrock:*:${AWS_ACCOUNT_ID}:inference-profile/*",
+        "arn:aws:bedrock:*:${AWS_ACCOUNT_ID}:async-invoke/*"
+      ]
+    },
+    {
+      "Sid": "TrackOwnAsyncInvocations",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:GetAsyncInvoke",
+        "bedrock:ListAsyncInvokes"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:PrincipalAccount": "${AWS_ACCOUNT_ID}"
+        }
+      }
+    },
+    {
+      "Sid": "DiscoverModels",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:ListFoundationModels",
+        "bedrock:GetFoundationModel"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "VerifyModelEntitlement",
+      "Effect": "Allow",
+      "Action": [
+        "aws-marketplace:ViewSubscriptions"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyCrossAccountUse",
+      "Effect": "Deny",
+      "Action": "bedrock:*",
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:PrincipalAccount": "${AWS_ACCOUNT_ID}"
+        }
+      }
+    }
+  ]
+}

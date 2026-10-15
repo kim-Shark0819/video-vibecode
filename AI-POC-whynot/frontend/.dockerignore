@@ -1,0 +1,19 @@
+# 프론트엔드 이미지 빌드 컨텍스트에서 뺄 것.
+#
+# **워크스페이스 루트의 .dockerignore 는 여기에 적용되지 않는다.** Docker 는 빌드
+# 컨텍스트 루트에서만 .dockerignore 를 읽고, 이 이미지는 `docker build ... frontend`
+# 로 빌드된다(terraform_infra/_build-push.sh, infra/build-deploy.sh). 그래서 루트에
+# 무엇을 적어도 frontend/ 안의 파일은 전부 이미지로 들어간다.
+#
+# Dockerfile 이 `COPY public/ /usr/share/nginx/html/` 로 디렉터리를 통째로 담고,
+# nginx 는 그 아래를 인증 없이 정적 서빙한다. 즉 public/ 에 실수로 둔 파일은
+# 그대로 인터넷에 열린다. 실제로 리더 모달 겉모습을 확인하려고 만든
+# `_preview-reader.html` 이 남아 있었다(파일 주석에 "확인 후 삭제한다"고 적힌 채로).
+# 지우는 것을 사람이 기억하는 방식은 반드시 한 번 실패하므로 패턴으로 막는다.
+_preview-*
+*.preview.html
+_scratch-*
+
+# 작업 중 산출물 · 스크린샷
+*.png.bak
+.DS_Store

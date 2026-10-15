@@ -1,0 +1,40 @@
+# AI-POC/terraform/hub/25-app-iam
+#
+#   Copy-Item terraform.tfvars.example terraform.tfvars
+#
+# 값은 deploy/config.env · config.dev.env · config.prod.env 와 **같아야 한다.**
+# 어긋나면 렌더된 ServiceAccount 가 없는 역할을 가리키고, 파드는 기동하지만
+# S3·Bedrock 호출에서만 실패한다.
+
+account_id  = "730335451955"
+region      = "ap-northeast-2"
+aws_profile = "ai-poc-hub"
+
+# config.env 의 S3_BUCKET
+s3_bucket = "ai-poc-730335451955"
+# config.env 의 S3_VIDEO_BUCKET. 아직 없으므로 빈 문자열.
+s3_video_bucket = ""
+
+# config.env 의 K8S_NAMESPACE / APP_SERVICE_ACCOUNT
+k8s_namespace       = "ai-poc"
+app_service_account = "ai-poc-app"
+
+# 키(dev|prod)는 deploy.ps1 -Target 값과 같게 둔다.
+targets = {
+  dev = {
+    cluster_name        = "Dev-AI-POC-eks"
+    role_name           = "Dev-AI-POC-app-role"
+    s3_policy_name      = "Dev-AI-POC-s3-access"
+    bedrock_policy_name = "Dev-AI-POC-bedrock-access"
+  }
+  prod = {
+    cluster_name        = "AI-POC-eks"
+    role_name           = "AI-POC-app-role"
+    s3_policy_name      = "AI-POC-s3-access"
+    bedrock_policy_name = "AI-POC-bedrock-access"
+  }
+}
+
+# 운영 클러스터의 OIDC provider 는 이미 IAM 에 등록돼 있고 albc 역할이 쓰고 있다.
+# data 로 읽기만 한다. Dev 는 미등록이라 이 목록에 넣지 않아 새로 등록된다.
+existing_oidc_provider_targets = ["prod"]

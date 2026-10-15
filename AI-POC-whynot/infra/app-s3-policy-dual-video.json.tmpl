@@ -1,0 +1,85 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ResolveBucketRegion",
+      "Effect": "Allow",
+      "Action": ["s3:GetBucketLocation"],
+      "Resource": ["${S3_BUCKET_ARN}", "${S3_VIDEO_ACTIVE_BUCKET_ARN}", "${S3_VIDEO_LEGACY_BUCKET_ARN}"]
+    },
+    {
+      "Sid": "ListUserAndConfigContent",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": "${S3_BUCKET_ARN}",
+      "Condition": {"StringLike": {"s3:prefix": ["users/*", "_config/*"]}}
+    },
+    {
+      "Sid": "ManageUserContent",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
+      "Resource": "${S3_BUCKET_ARN}/users/*"
+    },
+    {
+      "Sid": "ManageRuntimeConfigOverrides",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject"],
+      "Resource": ["${S3_BUCKET_ARN}/_config/models.json", "${S3_BUCKET_ARN}/_config/prompts.json"]
+    },
+    {
+      "Sid": "ReadPromptHistoryVersions",
+      "Effect": "Allow",
+      "Action": ["s3:GetObjectVersion"],
+      "Resource": "${S3_BUCKET_ARN}/_config/prompts.json"
+    },
+    {
+      "Sid": "ListPromptVersions",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucketVersions"],
+      "Resource": "${S3_BUCKET_ARN}",
+      "Condition": {"StringLike": {"s3:prefix": ["_config/*"]}}
+    },
+    {
+      "Sid": "ListActiveVideoOutputBucket",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": "${S3_VIDEO_ACTIVE_BUCKET_ARN}",
+      "Condition": {"StringLike": {"s3:prefix": ["users/*"]}}
+    },
+    {
+      "Sid": "ManageActiveVideoOutput",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
+      "Resource": "${S3_VIDEO_ACTIVE_BUCKET_ARN}/users/*"
+    },
+    {
+      "Sid": "ReadLegacyVideoOutput",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": "${S3_VIDEO_LEGACY_BUCKET_ARN}/*"
+    },
+    {
+      "Sid": "WriteSecondaryVideoOutput",
+      "Effect": "Allow",
+      "Action": ${S3_VIDEO_SECONDARY_WRITE_ACTIONS},
+      "Resource": "${S3_VIDEO_LEGACY_BUCKET_ARN}/users/*"
+    },
+    {
+      "Sid": "ListLegacyUserVideoOutput",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": "${S3_VIDEO_LEGACY_BUCKET_ARN}",
+      "Condition": {"StringLike": {"s3:prefix": ["users/*"]}}
+    },
+    {
+      "Sid": "RestrictToProjectBucketsOnly",
+      "Effect": "Deny",
+      "Action": "s3:*",
+      "NotResource": [
+        "${S3_BUCKET_ARN}", "${S3_BUCKET_ARN}/*",
+        "${S3_VIDEO_ACTIVE_BUCKET_ARN}", "${S3_VIDEO_ACTIVE_BUCKET_ARN}/*",
+        "${S3_VIDEO_LEGACY_BUCKET_ARN}", "${S3_VIDEO_LEGACY_BUCKET_ARN}/*"
+      ]
+    }
+  ]
+}

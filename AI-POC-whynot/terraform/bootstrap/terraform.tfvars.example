@@ -1,0 +1,11 @@
+# 복사해서 terraform.tfvars 로 쓴다. 실물은 .gitignore 대상이다.
+#
+#   Copy-Item terraform.tfvars.example terraform.tfvars
+
+# 이 구성이 적용될 계정. 자격증명이 다르면 provider 가 초기화되지 않는다.
+account_id = "730335451955"
+
+region      = "ap-northeast-2"
+aws_profile = "ai-poc-hub"
+
+project_name = "ai-poc"

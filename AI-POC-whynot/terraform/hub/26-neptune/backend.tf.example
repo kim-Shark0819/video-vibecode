@@ -1,0 +1,11 @@
+/*
+    Copy-Item backend.tf.example backend.tf
+    Copy-Item backend.hcl.example backend.hcl
+    terraform init -backend-config=backend.hcl
+*/
+terraform {
+  backend "s3" {
+    use_lockfile = true
+    encrypt      = true
+  }
+}

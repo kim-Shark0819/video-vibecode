@@ -1,0 +1,20 @@
+# GPU 영상 워커 의존성.
+#
+# torch / torchvision 은 base 이미지(pytorch/pytorch:2.6.0-cuda12.4)에 이미 있다.
+# 여기서 다시 지정하면 CPU 빌드로 덮일 위험이 있어 넣지 않는다.
+#
+# Wan 2.2 자체 의존성은 Dockerfile 이 /app/Wan2.2/requirements.txt 로 먼저 설치한다.
+# 이 파일은 **워커 껍데기**가 쓰는 것만 담는다.
+
+# SQS · S3 · Bedrock. base 이미지에 없다.
+boto3==1.40.47
+
+# 가중치 무결성 확인과 모델 카드 조회. 다운로드는 Job 이 하고 워커는 읽기만 한다.
+huggingface-hub==0.35.3
+
+# 키프레임 이미지를 읽고 크기를 맞춘다.
+pillow==11.3.0
+
+# manifest 를 쓸 때 사용. 표준 json 으로도 되지만 NaN·Infinity 를 거부해
+# 잘못된 계측값이 조용히 저장되는 것을 막는다.
+orjson==3.11.3

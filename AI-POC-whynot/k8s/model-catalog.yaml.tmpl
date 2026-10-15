@@ -1,0 +1,129 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${MODEL_CATALOG_CONFIGMAP}
+  namespace: ${K8S_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: ${APP_SERVICE_ACCOUNT}
+    app.kubernetes.io/part-of: ${PROJECT_NAME}
+data:
+  # 모델을 바꾸려면 이 파일만 수정하고 rollout restart 하면 됩니다.
+  # 즉시 반영이 필요하면 관리자 계정으로 /api/admin/models 를 사용하세요.
+  #
+  # 확인된 사실 (2026-08-13, 계정 061051247564 조회 결과):
+  #
+  #  [영상]
+  #   - ap-northeast-2: 영상 출력 모델 없음.
+  #   - us-east-1: Amazon 계열 영상 모델은 둘 다 LEGACY(EOL 2026-09-30) → 신규 호출 불가.
+  #   - us-west-2: luma.ray-v2:0 만 ACTIVE. 즉 실제로 쓸 수 있는 영상 모델은 이것 하나뿐이다.
+  #     vpoc1(2026-09-23)이 실호출로 확인했다 — 5초 540p 제출 72초, 출력 1.16MB MP4.
+  #   - 그래서 영상 관련 리소스(모델, 출력 버킷)는 us-west-2로 통일한다.
+  #     비동기 출력 버킷은 모델과 같은 리전이어야 한다.
+  #   - Luma Ray2 한계: 길이는 5초/9초, 해상도는 540p/720p뿐. 1분이나 1시간짜리를
+  #     한 번에 만드는 모델은 Bedrock에 없다. 긴 영상은 여러 컷을 이어 붙여야 한다.
+  #   - Luma Ray2는 keyframes.frame0으로 이미지 입력을 지원한다(image-to-video).
+  #
+  #  [이미지 / 콘티]
+  #   - us-east-1에는 텍스트→이미지 생성 모델이 없다(편집·업스케일 모델만 있고
+  #     amazon.nova-canvas-v1:0은 LEGACY).
+  #   - us-west-2: stability.stable-image-core-v1:1, stability.sd3-5-large-v1:0,
+  #     stability.stable-image-ultra-v1:1 이 ACTIVE.
+  #   - 콘티 기본값은 stable-image-core로 둔다. 내부 감독 회의용 러프 수준에는 충분하고
+  #     빠르고 저렴하다. 품질을 높이려면 sd3-5-large를 기본으로 바꾸면 된다.
+  models.json: |
+    {
+      "version": 3,
+      "models": [
+        {
+          "id": "luma-ray2",
+          "label": "Luma Ray2 · 샷 생성 (us-west-2)",
+          "kind": "video",
+          "tier": "standard",
+          "provider": "luma.ray",
+          "modelId": "luma.ray-v2:0",
+          "region": "${VPOC_VIDEO_REGION}",
+          "outputBucket": "${VPOC_VIDEO_BUCKET}",
+          "invocation": "async",
+          "enabled": true,
+          "isDefault": true,
+          "notes": "vpoc1 기준 영상 모델. 비동기 전용(StartAsyncInvoke)이고 출력 MP4 는 모델과 같은 리전의 S3 로 떨어진다. 1단계는 5초 540p 16:9 무음 고정이며 한 건에 3.75 USD 다. keyframes.frame0 으로 이미지 입력을 지원한다(1인 샷 전용, P1).",
+          "capabilities": {"imageInput": true, "maxDurationSeconds": 9, "resolutions": ["540p", "720p"], "durations": [5, 9]},
+          "defaults": {"durationSeconds": 5, "resolution": "540p", "aspectRatio": "16:9"}
+        },
+        {
+          "id": "sd35-large",
+          "label": "SD 3.5 Large · 표준 (us-west-2)",
+          "kind": "image",
+          "tier": "standard",
+          "provider": "stability.image",
+          "modelId": "stability.sd3-5-large-v1:0",
+          "region": "${IMAGE_MODEL_REGION}",
+          "invocation": "sync",
+          "enabled": true,
+          "isDefault": true,
+          "notes": "이미지 기본 모델. 프롬프트를 가장 정확히 따라 그림체 지정이 잘 먹습니다(실측 약 7초).",
+          "capabilities": {"imageInput": false, "stylePrompt": true, "aspectRatios": ["1:1", "2:3", "3:2", "4:5", "16:9", "9:16", "21:9", "9:21", "5:4"]},
+          "defaults": {"aspectRatio": "16:9"}
+        },
+        {
+          "id": "stable-image-core",
+          "label": "Stable Image Core · 러프 (us-west-2)",
+          "kind": "image",
+          "tier": "draft",
+          "provider": "stability.image",
+          "modelId": "stability.stable-image-core-v1:1",
+          "region": "${IMAGE_MODEL_REGION}",
+          "invocation": "sync",
+          "enabled": true,
+          "isDefault": false,
+          "notes": "가장 빠르고 저렴합니다(실측 약 4~6초). 러프 콘티를 여러 장 뽑을 때 사용합니다.",
+          "capabilities": {"imageInput": false, "stylePrompt": true, "aspectRatios": ["1:1", "2:3", "3:2", "4:5", "16:9", "9:16", "21:9", "9:21", "5:4"]},
+          "defaults": {"aspectRatio": "16:9"}
+        },
+        {
+          "id": "stable-image-ultra",
+          "label": "Stable Image Ultra · 고품질 (us-west-2)",
+          "kind": "image",
+          "tier": "premium",
+          "provider": "stability.image",
+          "modelId": "stability.stable-image-ultra-v1:1",
+          "region": "${IMAGE_MODEL_REGION}",
+          "invocation": "sync",
+          "enabled": true,
+          "isDefault": false,
+          "notes": "묘사가 가장 정밀합니다. 최종 키비주얼과 포스터에 사용합니다(실측 약 11초, 가장 비쌈).",
+          "capabilities": {"imageInput": false, "stylePrompt": true, "aspectRatios": ["1:1", "2:3", "3:2", "4:5", "16:9", "9:16", "21:9", "9:21", "5:4"]},
+          "defaults": {"aspectRatio": "16:9"}
+        },
+        {
+          "id": "style-guide",
+          "label": "Style Guide · 원작 그림체 매칭 (us-west-2)",
+          "kind": "image",
+          "tier": "standard",
+          "provider": "stability.style-guide",
+          "modelId": "us.stability.stable-image-style-guide-v1:0",
+          "region": "${IMAGE_MODEL_REGION}",
+          "invocation": "sync",
+          "enabled": false,
+          "isDefault": false,
+          "notes": "2026-09-20 실측: 무해한 프롬프트와 단색 이미지에도 images=0 finish_reasons=['Filter reason: prompt'] 를 돌려줍니다. 같은 프롬프트로 stability.sd3-5-large-v1:0 는 정상 생성합니다. 이 계정·리전에서 쓸 수 없어 끕니다. 켜기 전에 반드시 실제 생성까지 확인해야 합니다 — 호출 형식만 통과하는 것으로는 부족합니다. (이전 메모: 참조 이미지의 화풍을 추출해 새 장면을 같은 그림체로 그립니다. 프롬프트로는 특정 IP의 그림체를 재현할 수 없어 원작 컷을 넣을 때 이 모델로 갑니다. 온디맨드 호출이 불가해 us. 추론 프로파일 ID를 씁니다.)",
+          "capabilities": {"imageInput": true, "styleReference": true, "aspectRatios": ["1:1", "2:3", "3:2", "4:5", "16:9", "9:16", "21:9", "9:21", "5:4"]},
+          "defaults": {"aspectRatio": "16:9", "fidelity": 0.6}
+        },
+        {
+          "id": "control-structure",
+          "label": "Control Structure · 구도 유지 화풍 교체 (us-west-2)",
+          "kind": "image",
+          "tier": "standard",
+          "provider": "stability.control-structure",
+          "modelId": "us.stability.stable-image-control-structure-v1:0",
+          "region": "${IMAGE_MODEL_REGION}",
+          "invocation": "sync",
+          "enabled": false,
+          "isDefault": false,
+          "notes": "2026-09-20 실측: style-guide 와 같은 응답('Filter reason: prompt')으로 생성되지 않습니다. 이 계정·리전에서 쓸 수 없어 끕니다. (이전 메모: 웹툰 컷의 구도·포즈만 조건으로 쓰고 화풍은 프롬프트가 정합니다. 실사 스틸로 바꾸는 1단계에 씁니다. 일반 image-to-image 는 strength 를 낮추면 만화 느낌이 남고 높이면 구도가 무너져 이 일을 못 합니다. 출력 비율이 입력 이미지 비율을 따릅니다(aspect_ratio 필드가 없습니다). 온디맨드 호출이 불가해 us. 추론 프로파일 ID를 씁니다.)",
+          "capabilities": {"imageInput": true, "structureControl": true, "controlStrength": [0, 1], "aspectFollowsInput": true},
+          "defaults": {}
+        }
+      ]
+    }

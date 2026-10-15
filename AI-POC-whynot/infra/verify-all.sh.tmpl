@@ -1,0 +1,36 @@
+#!/bin/bash
+# 렌더링된 산출물입니다. 값을 바꾸려면 deploy/config.env를 수정하고 render.py를 다시 실행하세요.
+set -euo pipefail
+export HOME=/root KUBECONFIG=/root/.kube/config AWS_DEFAULT_REGION=${AWS_REGION}
+aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER_NAME} --kubeconfig "$KUBECONFIG" >/dev/null
+
+NS=${K8S_NAMESPACE}
+
+echo '=== DEPLOYMENTS ==='
+kubectl get deployment -n "$NS" -o custom-columns='NAME:.metadata.name,READY:.status.readyReplicas,DESIRED:.spec.replicas,IMAGE:.spec.template.spec.containers[0].image'
+
+echo '=== PODS (scheduling spread) ==='
+kubectl get pods -n "$NS" -o custom-columns='NAME:.metadata.name,STATUS:.status.phase,READY:.status.containerStatuses[0].ready,RESTARTS:.status.containerStatuses[0].restartCount,NODE:.spec.nodeName,IP:.status.podIP'
+
+echo '=== SERVICE ACCOUNT / IRSA ==='
+kubectl get sa ${APP_SERVICE_ACCOUNT} -n "$NS" -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}'; echo
+
+echo '=== ACCOUNT GUARD ENV (expected account comes from config.env) ==='
+kubectl get deployment ${APP_SERVICE_ACCOUNT} -n "$NS" -o jsonpath='{range .spec.template.spec.containers[0].env[?(@.name=="EXPECTED_ACCOUNT_ID")]}{.name}={.value}{"\n"}{end}'
+
+echo '=== SECRET KEYS (values not shown) ==='
+kubectl get secret toon-change-ai-pj-auth -n "$NS" -o json | python3 -c 'import json,sys; print(", ".join(sorted(json.load(sys.stdin)["data"].keys())))'
+
+echo '=== MODEL CATALOG CONFIGMAP ==='
+kubectl get configmap ${MODEL_CATALOG_CONFIGMAP} -n "$NS" -o jsonpath='{.metadata.name}{" keys: "}{range $k,$v := .data}{$k}{" "}{end}{"\n"}'
+
+echo '=== INGRESS ==='
+kubectl get ingress -n "$NS" -o custom-columns='NAME:.metadata.name,CLASS:.spec.ingressClassName,HOST:.spec.rules[0].host,ADDRESS:.status.loadBalancer.ingress[0].hostname'
+
+echo '=== POD LOG TAIL (app) ==='
+kubectl logs -n "$NS" -l app.kubernetes.io/name=${APP_SERVICE_ACCOUNT} --tail=5 --prefix=true 2>/dev/null | tail -12 || true
+
+echo '=== NAMESPACE ISOLATION CHECK (other workloads untouched) ==='
+kubectl get deployment -n billing -o custom-columns='NAME:.metadata.name,READY:.status.readyReplicas,DESIRED:.spec.replicas' 2>/dev/null || echo 'billing namespace not present'
+
+echo 'CLUSTER VERIFICATION COMPLETE'

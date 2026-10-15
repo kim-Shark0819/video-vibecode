@@ -1,0 +1,6 @@
+# Copy-Item backend.hcl.example backend.hcl
+# terraform init -backend-config=backend.hcl
+bucket  = "ai-poc-tfstate-730335451955-ap-northeast-2"
+key     = "hub/20-eks-prod.tfstate"
+region  = "ap-northeast-2"
+profile = "ai-poc-hub"

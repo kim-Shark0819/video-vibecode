@@ -1,0 +1,58 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${PROJECT_NAME}
+  namespace: ${K8S_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: ${PROJECT_NAME}
+    app.kubernetes.io/part-of: ${PROJECT_NAME}
+  annotations:
+    alb.ingress.kubernetes.io/load-balancer-name: ${ALB_NAME}
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/subnets: ${PUBLIC_SUBNET_IDS}
+    # 리스너와 TLS 는 render.py 가 config.env 값을 보고 만든다.
+    #
+    #   ACM_CERTIFICATE_ARN 비어 있음  ->  [{"HTTP":80}]           (인증서 주석만)
+    #   ACM_CERTIFICATE_ARN 있음        ->  +{"HTTPS":443}          + certificate-arn
+    #   위 + APP_DOMAIN 있음            ->  + ssl-redirect: "443"
+    #
+    # 조건을 템플릿에 두지 않는 이유: 렌더러는 단순 변수 치환만 한다. 인증서가 없는
+    # 계정에서 certificate-arn 을 빈 값으로 넣으면 컨트롤러가 리스너를 만들지 못하고,
+    # ssl-redirect 까지 있으면 80 도 함께 죽는다. 실제로 그런 사고가 있었다.
+    #
+    # 실측 2026-09-09: 도메인 두 개가 Route53 alias 로 각 ALB 를 가리키고 ACM 에
+    # *.meta-clouds.com(ISSUED)이 있는데도 https 접속이 "사이트에 연결할 수 없음"
+    # 이었다. 원인은 이 값이 80 뿐이어서 443 에 아무것도 듣고 있지 않았던 것이다.
+    alb.ingress.kubernetes.io/listen-ports: '${ALB_LISTEN_PORTS}'
+    ${ALB_TLS_ANNOTATIONS}
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/success-codes: "200"
+    # idle timeout 을 명시한다. 없으면 ALB 기본값 60초가 걸리고, 이 앱의 생성 요청은
+    # 60초를 넘는 것이 정상이다(대본 회차 16,000 토큰, 바이블 8,000 토큰).
+    # 60초에 끊기면 화면은 504 인데 서버는 계속 돌아 요금만 나간다.
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=300
+    alb.ingress.kubernetes.io/tags: Project=${PROJECT_NAME},Environment=test,ManagedBy=Kiro
+spec:
+  ingressClassName: alb
+  rules:
+    # host 를 적지 않는다. 도메인이 없어 ALB DNS 이름으로 직접 접속해 테스트한다.
+    # 빈 host 를 넣으면 규칙이 유효하지 않아 Ingress 가 거절된다.
+    - http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: ${APP_SERVICE_ACCOUNT}
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ${FRONTEND_DEPLOYMENT_NAME}
+                port:
+                  number: 80

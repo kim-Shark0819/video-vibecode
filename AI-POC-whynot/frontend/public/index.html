@@ -1,0 +1,2290 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0b10">
+  <meta name="description" content="웹툰을 영상으로 만드는 AI 스튜디오">
+  <title>WHYNOT AI STUDIO</title>
+  <!-- 폰트를 CSS 파싱 전에 받기 시작한다. preload가 없으면 브라우저가 styles.css를 다 읽고
+       @font-face를 만난 뒤에야 요청해서 첫 화면이 시스템 폰트로 한 번 그려진다.
+       버전 쿼리를 붙이지 않는다. 이 URL은 styles.css의 @font-face와 문자 그대로 같아야 하고,
+       styles.css는 Dockerfile의 sed 대상이 아니라 __ASSET_VERSION__이 치환되지 않는다. -->
+  <link rel="preload" href="/fonts/PretendardVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/styles.css?v=__ASSET_VERSION__">
+  <!-- vpoc1 영상 기능 전용 스타일. 선택자를 .vpoc-* 로만 쓴다. -->
+  <link rel="stylesheet" href="/vpoc.css?v=__ASSET_VERSION__">
+  <!-- 환경별 기능 플래그. 이미지 기본값은 video off / story on이고 ArgoCD ConfigMap이 덮어쓴다. -->
+  <script src="/runtime-config.js?v=__ASSET_VERSION__"></script>
+  <script src="/app.js?v=__ASSET_VERSION__" defer></script>
+  <!-- vpoc1 영상 기능(4단계 흐름 + 프로젝트 보기). app.js 뒤에 로드한다 —
+       #vpoc-root 안의 DOM 을 전부 직접 만들고, app.js 의 전역 헬퍼에 의존하지 않는다.
+       이 줄만 지우면 영상 화면이 "영상 기능 준비 중" 으로 돌아간다. -->
+  <script src="/vpoc.js?v=__ASSET_VERSION__" defer></script>
+</head>
+<body>
+  <!-- 키보드 사용자가 사이드바를 지나치지 않아도 되게 한다. 포커스를 받을 때만 나타난다. -->
+  <a class="skip-link" href="#mainContent">본문으로 건너뛰기</a>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+
+  <!-- ================= 로그인 / 회원가입 ================= -->
+  <section class="login-screen" id="loginScreen">
+    <div class="login-showcase">
+      <!-- WHYNOT 워드마크는 배경에 따라 두 파일을 쓴다.
+             logo.svg        주황 워드마크 -> 로그인 · 모바일 · 상단 경로처럼 밝거나 검은 배경
+             logo-white.svg  흰 워드마크   -> 사이드바의 따뜻한 검정 배경
+           둘 다 배경 상자 없이 글자만 표시한다. <img> 로 불러오는 SVG 에는 페이지 CSS가
+           닿지 않으므로 한 파일을 currentColor 로 바꿔 쓰지 않고 fill 별 파일을 둔다. -->
+      <a class="brand brand-light" href="#" aria-label="WHYNOT AI STUDIO 홈">
+        <span class="brand-logo-surface">
+          <img class="brand-logo brand-logo-login" src="/assets/brand/logo.svg?v=__ASSET_VERSION__" width="339" height="80" alt="WHYNOT" decoding="async">
+        </span>
+      </a>
+
+      <div class="showcase-copy">
+        <span class="eyebrow"><i></i> BEDROCK-POWERED CREATIVE STUDIO</span>
+        <h1>멈춰 있던 장면에<br><em>이야기를 불어넣다.</em></h1>
+        <p>웹툰 이미지를 올리고 원하는 움직임을 설명하세요.<br>프로젝트로 정리하고 팀과 함께 볼 수 있습니다.</p>
+      </div>
+      <!--
+        로그인 비주얼: 나비 모션 영상.
+
+        병합 시점에는 이 자리에 Base 의 CSS 일러스트(`scene-stack`)를 두고 Overlay 의
+        영상은 "고객사 자산"이라며 뺐다. 사용자 지시로 영상을 적용해 그 판단을 뒤집는다.
+        `styles.css` 의 `login-motion*` 규칙과 `app.js` 의 `syncLoginMotion()` 은
+        병합 때 이미 들어와 있었고 대응 마크업이 없어 동작하지 않던 상태였다.
+        이 블록이 그 둘을 활성화한다.
+
+        `scene-stack` 마크업을 함께 두지 않는 이유: 두 요소의 z-index 가 모두 1 이고
+        `scene-stack` 이 DOM 뒤에 오면 영상 위에 일러스트가 겹쳐 그려진다.
+        CSS 규칙은 되돌릴 수 있게 `styles.css` 에 남겨 두었다.
+
+        장식이므로 스크린 리더와 포인터에서 제외한다(`aria-hidden` + CSS
+        `pointer-events: none`). 재생 실패·축소 모션·고대비 환경에서는 같은 영상의
+        정적 포스터가 대신 보인다(`styles.css` 의 prefers-reduced-motion /
+        forced-colors 블록).
+      -->
+      <div class="login-motion" aria-hidden="true">
+        <img class="login-motion-poster" src="/assets/login/butterfly-effect-poster.jpg?v=__ASSET_VERSION__" alt="" width="720" height="720" decoding="async" fetchpriority="high">
+        <video class="login-motion-video" id="loginMotionVideo" autoplay muted loop playsinline preload="metadata" poster="/assets/login/butterfly-effect-poster.jpg?v=__ASSET_VERSION__" tabindex="-1" disablepictureinpicture disableremoteplayback>
+          <source src="/assets/login/butterfly-effect.mp4?v=__ASSET_VERSION__" type="video/mp4">
+        </video>
+      </div>
+      <div class="showcase-foot">SECURE WORKSPACE <span></span> SEOUL REGION</div>
+    </div>
+
+    <div class="login-panel">
+      <div class="login-box">
+        <div class="mobile-brand">
+          <!-- 모바일 로그인 패널은 흰 배경(.login-panel)이라 주황 워드마크를 쓴다. -->
+          <img class="brand-logo brand-logo-mobile" src="/assets/brand/logo.svg?v=__ASSET_VERSION__" width="339" height="80" alt="WHYNOT" decoding="async">
+        </div>
+
+        <div class="auth-tabs" role="tablist">
+          <button class="auth-tab active" id="tabLogin" type="button" role="tab">로그인</button>
+          <button class="auth-tab" id="tabSignup" type="button" role="tab">회원가입</button>
+        </div>
+
+        <!-- 로그인 -->
+        <div class="auth-pane" id="loginPane">
+          <div class="login-heading">
+            <h2>다시 만나 반가워요</h2>
+            <p>작업 공간에 로그인하고 창작을 이어가세요.</p>
+          </div>
+          <form id="loginForm" novalidate>
+            <label class="field-label" for="username">아이디</label>
+            <div class="input-wrap">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z"/></svg>
+              <input id="username" name="username" type="text" autocomplete="username" placeholder="아이디를 입력하세요" required>
+            </div>
+            <label class="field-label" for="password">비밀번호</label>
+            <div class="input-wrap">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3M5 10h14v11H5V10Z"/></svg>
+              <input id="password" name="password" type="password" autocomplete="current-password" placeholder="비밀번호를 입력하세요" required>
+              <button class="password-toggle" id="passwordToggle" type="button" aria-label="비밀번호 표시">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/></svg>
+              </button>
+            </div>
+            <div class="login-error" id="loginError" role="alert"></div>
+            <button class="primary-button login-button" id="loginButton" type="submit">
+              <span>로그인</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+          </form>
+        </div>
+
+        <!-- 회원가입 -->
+        <div class="auth-pane is-hidden" id="signupPane">
+          <div class="login-heading">
+            <h2>계정 만들기</h2>
+            <p>회사 고유 코드가 있어야 가입할 수 있습니다.</p>
+          </div>
+          <form id="signupForm" novalidate>
+            <label class="field-label" for="signupUsername">아이디</label>
+            <div class="input-wrap">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z"/></svg>
+              <input id="signupUsername" type="text" autocomplete="username" placeholder="3~32자, 영문/숫자로 시작" required>
+            </div>
+            <label class="field-label" for="signupPassword">비밀번호</label>
+            <div class="input-wrap">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3M5 10h14v11H5V10Z"/></svg>
+              <input id="signupPassword" type="password" autocomplete="new-password" placeholder="4자 이상" required>
+            </div>
+            <label class="field-label" for="signupCompanyCode">회사 고유 코드 <b class="required">필수</b></label>
+            <div class="input-wrap">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v10H4zM8 7V5h8v2M9 12h6"/></svg>
+              <input id="signupCompanyCode" type="text" autocomplete="off" placeholder="관리자에게 받은 코드" required>
+            </div>
+            <p class="field-hint">코드는 관리자가 발급·변경합니다. 코드가 없으면 가입할 수 없습니다.</p>
+            <div class="login-error" id="signupError" role="alert"></div>
+            <div class="login-success" id="signupSuccess" role="status"></div>
+            <button class="primary-button login-button" id="signupButton" type="submit">
+              <span>가입하기</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 앱 ================= -->
+  <div class="app-shell is-hidden" id="appShell">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <a class="brand app-brand" href="#" data-view-target="home" aria-label="WHYNOT AI STUDIO 홈">
+          <span class="brand-logo-surface">
+            <img class="brand-logo brand-logo-sidebar" src="/assets/brand/logo-white.svg?v=__ASSET_VERSION__" width="339" height="80" alt="WHYNOT" decoding="async">
+          </span>
+          <span><small>AI STUDIO</small></span>
+        </a>
+        <!-- 넓은 화면용 접기. 좁은 화면에서는 감추고 아래 닫기(X)를 쓴다. -->
+        <button class="icon-button nav-collapse" id="navCollapse" type="button" aria-label="왼쪽 메뉴 접기" title="왼쪽 메뉴 접기" aria-controls="sidebar" aria-expanded="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 7l-5 5 5 5M19 5v14"/></svg>
+        </button>
+        <button class="icon-button sidebar-close" id="sidebarClose" aria-label="메뉴 닫기"><span></span><span></span></button>
+      </div>
+      <nav class="main-nav" aria-label="주 메뉴">
+        <p>WORKSPACE</p>
+        <button class="nav-item active" data-view-target="home">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>프로젝트</span>
+        </button>
+        <!--
+          영상 기능이 둘이다. 이름만으로는 구분되지 않아 배지에 엔진을 적는다.
+          "새 영상 만들기"(NEW)와 "NEW_영상 제작"(GPU)은 둘 다 NEW 로 읽혀서, 어느 쪽이
+          자체 GPU 인지 메뉴에서 알 수 없었다. 사용자가 요청한 대로 두 기능은 계속 공존한다.
+        -->
+
+
+        <!-- 지시서 1-1: 기존 영상 메뉴를 고치지 않고 별도 신규 메뉴로 만든다.
+             기존 '새 영상 만들기'는 Bedrock 경로, 이쪽은 자체 GPU의 Wan 2.2 전용이다. -->
+
+        <!-- scene_video: 장면 영상화(Seedance 2.0). 붙였다 뗄 수 있는 독립 기능.
+             이 버튼과 아래 "새로운 영상 만들기" section, scene.js 한 파일만 지우면 기능이 떨어진다.
+             위 두 영상 메뉴와 이름이 겹치지 않게 배지에 벤더를 적는다(SEEDANCE). -->
+
+          <!-- 사용자 제작 흐름(production.js). 기존 navSceneVideo 는 그대로 두고 항목만 더한다. -->
+
+        <button class="nav-item" data-view-target="library">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m9 9 6 3-6 3V9Z"/></svg><span>영상 라이브러리</span><b id="navVideoCount">0</b>
+        </button>
+        <!--
+          내 사용량. 한도가 걸린 계정만 보인다(app.js 의 applyUser 가 토글한다).
+          한도가 없는 사용자에게는 보여 줄 것이 없어 메뉴만 늘어난다.
+          관리자 사용량 화면과 달리 **자기 것만** 나온다. /api/usage/me 가 토큰 주체로
+          고정해서 남의 것을 볼 수 없다.
+        -->
+        <button class="nav-item is-hidden" id="navMyUsage" data-view-target="myUsage">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l3-4 3 3 4-6"/></svg><span>내 사용량</span>
+        </button>
+        <div class="admin-nav-section is-hidden" id="adminNavSection">
+          <p>ADMIN</p>
+          <button class="nav-item" data-view-target="users">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 20a5 5 0 0 0-10 0M11 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8M21 20a4 4 0 0 0-5-3.9M17.5 11.5a3 3 0 0 0 0-6"/></svg><span>사용자 관리</span><i>ADMIN</i>
+          </button>
+          <button class="nav-item" data-view-target="models">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 4h3.4l.5 2.3 2 1.2 2.2-.8 1.7 2.9-1.7 1.6v2.3l1.7 1.6-1.7 2.9-2.2-.8-2 1.2-.5 2.3h-3.4l-.5-2.3-2-1.2-2.2.8L3.9 18l1.7-1.6v-2.3L3.9 12.5l1.7-2.9 2.2.8 2-1.2.5-2.3Z"/><circle cx="12" cy="12" r="2.4"/></svg><span>모델 관리</span><i>ADMIN</i>
+          </button>
+        </div>
+      </nav>
+      <div class="sidebar-user">
+        <div class="avatar" id="userAvatar">AD</div>
+        <div><strong id="userDisplayName">-</strong><span id="userRoleLabel">-</span></div>
+        <button class="icon-button" id="passwordChangeButton" type="button" aria-label="비밀번호 변경" title="비밀번호 변경"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3M5 10h14v11H5V10Z"/><path d="M12 14v3"/></svg></button>
+        <button class="icon-button" id="logoutButton" aria-label="로그아웃" title="로그아웃"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H5v14h5M14 8l4 4-4 4M8 12h10"/></svg></button>
+      </div>
+    </aside>
+    <div class="sidebar-scrim" id="sidebarScrim"></div>
+
+    <main class="workspace" id="mainContent" tabindex="-1">
+      <header class="topbar">
+        <!-- 좁은 화면에서는 서랍 열기, 넓은 화면에서는 메뉴 접기/펼치기 토글로 쓴다. -->
+        <button class="icon-button menu-button" id="menuButton" type="button" aria-label="왼쪽 메뉴 접기" title="왼쪽 메뉴 접기" aria-controls="sidebar" aria-expanded="true"><span></span><span></span><span></span></button>
+        <div class="breadcrumb">
+          <span class="breadcrumb-brand"><b>AI STUDIO</b><img class="brand-logo brand-logo-breadcrumb" src="/assets/brand/logo.svg?v=__ASSET_VERSION__" width="339" height="80" alt="" decoding="async"></span>
+          <i></i><strong id="pageTitle">프로젝트</strong>
+        </div>
+        <div class="top-actions">
+          <!-- 진행 중인 생성 작업. 없으면 감춘다. 누르면 라이브러리의 진행 목록으로 간다. -->
+          <button class="running-chip is-hidden" id="runningChip" type="button">
+            <span class="running-dot" aria-hidden="true"></span>
+            <span id="runningLabel">생성 중</span>
+          </button>
+          <span class="system-status"><i></i> 시스템 정상</span>
+          <div class="top-avatar" id="topAvatar">AD</div>
+        </div>
+      </header>
+
+      <div class="content">
+        <!-- 어느 프로젝트에서 넘어왔는지. 스튜디오·콘티 화면에서만 보인다.
+             산출물이 프로젝트에 저장되지는 않으므로 그렇게 오해하지 않도록 문구를 적는다. -->
+        <div class="from-project is-hidden" id="fromProject">
+          <span class="from-project-label">작업 중</span>
+          <strong id="fromProjectTitle">-</strong>
+          <button class="text-action" id="fromProjectBack" type="button">프로젝트로 돌아가기</button>
+          <button class="icon-button from-project-clear" id="fromProjectClear" type="button" aria-label="연결 해제"><span></span><span></span></button>
+        </div>
+        <!-- ============ 메인: 프로젝트 ============ -->
+        <section class="view active" id="homeView" data-view="home">
+          <div class="page-intro">
+            <div>
+              <span class="eyebrow dark"><i></i> PROJECTS</span>
+              <h1>프로젝트</h1>
+              <p>공유 프로젝트는 모든 사용자가 볼 수 있고, 개인 프로젝트는 나만 볼 수 있습니다.</p>
+            </div>
+            <button class="primary-button new-project-button" id="newProjectButton" type="button">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>새 프로젝트</span>
+            </button>
+          </div>
+
+          <div class="project-track-filter" aria-label="프로젝트 개발 트랙 필터">
+            <strong>개발 트랙</strong>
+            <div class="segmented" id="projectTrackFilter">
+              <button type="button" class="active" data-track-filter="all">전체</button>
+              <button type="button" data-track-filter="story">스토리</button>
+              <button type="button" data-track-filter="video">영상</button>
+              <button type="button" data-track-filter="unassigned">미선택</button>
+            </div>
+          </div>
+          <p class="login-error is-hidden" id="projectTrackConfigError" role="alert">스토리 개발과 영상 개발이 모두 꺼져 있습니다. 관리자 설정을 확인해 주세요.</p>
+
+          <section class="project-block">
+            <div class="block-head">
+              <h2>공유 프로젝트</h2>
+              <span class="block-count" id="sharedCount">0</span>
+              <p>모든 유저가 함께 보는 거대 프로젝트 및 공유 프로젝트</p>
+            </div>
+            <div class="poster-grid" id="sharedGrid"></div>
+            <div class="empty-block is-hidden" id="sharedEmpty">
+              <span><svg viewBox="0 0 32 32"><path d="M5 8h22v18H5zM5 14h22M12 8v18"/></svg></span>
+              <strong>공유 프로젝트가 없습니다</strong>
+              <p>새 프로젝트를 만들 때 공개 범위를 '공유'로 선택하세요.</p>
+            </div>
+          </section>
+
+          <section class="project-block">
+            <div class="block-head">
+              <h2>개인 프로젝트</h2>
+              <span class="block-count" id="privateCount">0</span>
+              <p>본인만 확인할 수 있는 작업 공간</p>
+            </div>
+            <div class="tile-grid" id="privateGrid"></div>
+            <div class="empty-block is-hidden" id="privateEmpty">
+              <span><svg viewBox="0 0 32 32"><path d="M9 13V9a7 7 0 0 1 14 0v4M6 13h20v14H6z"/></svg></span>
+              <strong>개인 프로젝트가 없습니다</strong>
+              <p>아이디어 단계의 작업을 개인 프로젝트로 시작해 보세요.</p>
+            </div>
+          </section>
+        </section>
+
+        <!-- ============ 프로젝트 상세 ============ -->
+        <section class="view" id="projectDetailView" data-view="projectDetail">
+          <button class="back-link" id="projectBack" type="button">
+            <svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg> 프로젝트 목록
+          </button>
+
+          <div class="detail-layout split-layout" data-split="projectDetail">
+            <aside class="detail-cover">
+              <div class="detail-cover-frame" id="detailCoverFrame"></div>
+              <div class="detail-cover-actions" id="detailCoverActions">
+                <button class="primary-button" id="detailCoverAi" type="button">AI 표지 생성</button>
+                <label class="upload-cover block" id="detailCoverUploadLabel">
+                  직접 등록
+                  <input id="detailCoverFile" type="file" accept="image/png,image/jpeg,image/webp" class="sr-only-focusable">
+                </label>
+              </div>
+              <p class="field-hint" id="detailCoverHint">표지는 스토리를 기반으로 AI가 만들거나 직접 올릴 수 있습니다.</p>
+
+              <div class="cover-history is-hidden" id="coverHistoryBlock">
+                <div class="cover-history-head">
+                  <strong>이전 표지</strong>
+                  <span id="coverHistoryCount">0 / 3</span>
+                </div>
+                <div class="cover-history-grid" id="coverHistoryGrid"></div>
+                <p class="field-hint">최대 <b id="coverHistoryLimit">3</b>개까지 보관하고, 넘으면 가장 오래된 이미지가 삭제됩니다.</p>
+              </div>
+            </aside>
+
+            <div class="split-bar" role="separator" tabindex="0" aria-orientation="vertical" aria-label="표지 영역과 본문 영역의 폭 조절 (좌우 화살표로 조절, Enter로 초기화)" aria-valuemin="15" aria-valuemax="55" aria-valuenow="25"></div>
+
+            <div class="detail-main">
+              <div class="detail-head">
+                <span class="visibility-badge" id="detailVisibilityBadge">개인</span>
+                <span class="detail-meta" id="detailMeta">-</span>
+              </div>
+
+              <!-- 진행률. 이 프로젝트가 어디까지 왔는지 한 줄로 보여준다.
+                   전에는 긴 스크롤을 끝까지 훑어야 알 수 있었다. -->
+              <ol class="progress-track" id="progressTrack" aria-label="프로젝트 진행 단계">
+                <li class="progress-step" data-step="source"><span class="progress-mark" aria-hidden="true"></span><span class="progress-name">원본 자료</span></li>
+                <li class="progress-step" data-step="direction"><span class="progress-mark" aria-hidden="true"></span><span class="progress-name">기획 방향</span></li>
+                <li class="progress-step" data-step="documents"><span class="progress-mark" aria-hidden="true"></span><span class="progress-name">AI 산출물 <b id="progressDocCount">0/5</b></span></li>
+                <li class="progress-step" data-step="handoff"><span class="progress-mark" aria-hidden="true"></span><span class="progress-name">제작</span></li>
+              </ol>
+              <input class="detail-title" id="detailTitle" type="text" maxlength="120" placeholder="프로젝트 제목">
+              <!-- 영상 전용에서는 줄거리 칸이 아니라 폴더 메모다. rows 를 12 에서 4 로 줄였다.
+                   필드와 maxlength 는 유지한다 — AI 표지 생성이 이 값을 쓴다. -->
+              <label class="field-label" for="detailStory">설명 <small class="field-optional">선택</small></label>
+              <textarea id="detailStory" rows="4" maxlength="8000" placeholder="이 폴더가 무엇인지 적어주세요. AI 표지 생성에도 사용됩니다."></textarea>
+              <div class="detail-foot">
+                <span class="detail-hint" id="detailSaveHint"></span>
+                <div class="detail-buttons" id="detailOwnerButtons">
+                  <button class="text-action" id="detailVisibilityToggle" type="button">공개 범위 전환</button>
+                  <button class="text-action danger" id="detailDelete" type="button">프로젝트 삭제</button>
+                  <button class="primary-button" id="detailSave" type="button">저장</button>
+                </div>
+              </div>
+              <div class="readonly-note is-hidden" id="detailReadonlyNote">
+                다른 사용자의 공유 프로젝트입니다. 내용을 볼 수만 있습니다.
+              </div>
+
+              <!-- ============ Spec 10 영상 프로젝트 폴더 (prd2.md 3장) ============
+                   구역 순서는 와이어프레임 `프로젝트_폴더화_계획.png` 의 위→아래다:
+                   S1 헤더 → S2 토글 → S3 영상 → S4 인물 → S5 갤러리 → S6 기록.
+                   문구는 와이어프레임 원문을 글자 그대로 쓴다 — 체커가 문자열 일치를 검사한다.
+                   렌더·이벤트는 /video-folder.js 의 window.whynotVideoFolder 가 맡는다 (R13:
+                   고객 전용 자산에서 해결한다). 기본은 is-hidden 이고 app.js 의
+                   applyProjectTrackView() 가 video 트랙 상세에서만 드러낸다. -->
+              <section class="panel is-hidden video-folder" id="videoFolder">
+                <!-- S1 헤더 -->
+                <div class="panel-head video-folder-head">
+                  <div>
+                    <h2 id="videoFolderTitle">프로젝트 명</h2>
+                    <p class="field-hint" id="videoFolderWorkTitle"></p>
+                  </div>
+                  <div class="video-folder-head-actions">
+                    <span class="stage-badge" id="videoFolderTrackBadge">영상</span>
+                    <button class="primary-button" id="videoFolderEnter" type="button">영상 개발 시작</button>
+                  </div>
+                </div>
+                <div class="login-error" id="videoFolderError" role="alert"></div>
+
+                <!-- S2 토글. 접는 대상은 S3 영상 영역만이다 (D-P05 제안값). -->
+                <button class="text-action video-folder-toggle" id="videoFolderToggle" type="button"
+                        aria-expanded="true" aria-controls="videoFolderVideos">영상 접기 ▼</button>
+
+                <!-- S3 영상 -->
+                <div class="folder-block" id="videoFolderVideos">
+                  <div class="folder-head">
+                    <strong>프로젝트를 통해 만들어진 영상이 있는 곳</strong>
+                    <span class="doc-chip" id="videoFolderCountBadge">영상 0</span>
+                  </div>
+                  <p class="field-hint is-hidden" id="videoFolderEmpty">아직 만들어진 영상이 없습니다.</p>
+                  <div class="folder-list video-folder-list" id="videoFolderList"></div>
+                  <div class="video-folder-player" id="videoFolderPlayer"></div>
+                </div>
+
+                <!-- S4~S6 (인물·갤러리·기록) 은 구 씬 레코드 구조를 읽는 구획이라 함께
+                     지웠다. 결과 조회는 새 story-results 계층 하나로 간다. -->
+              </section>
+
+              <!-- ---- 영상 폴더 ----
+                   와이낫미디어용. 프로젝트를 스토리 작업 공간이 아니라 폴더로 쓴다.
+                   안에 들어가는 것은 두 가지뿐이다 — 캐릭터 정보, 그리고 만든 영상 컷.
+
+                   둘 다 이미 있는 데이터를 읽기만 한다. (:character_sheet) 와 (:video_scene)
+                   정점은 projectId 를 문자열 속성으로 들고 있고 GET /api/characters 와
+                   GET /api/scenes 가 ?projectId= 필터를 이미 지원한다. 백엔드 변경은 없다.
+
+                   기본은 is-hidden 이고 app.js 의 applyProjectTrackView() 가 video 트랙 상세에서만 드러낸다.
+                   story 트랙의 기존 작업 구획과 코드는 삭제하지 않는다.
+
+                   Spec 10 이후: 와이어프레임 폴더(#videoFolder)가 위에 생겨 이 구획과 겹친다.
+                   지우지 않고 접이식으로 감싸 기본 닫힘으로 둔다 — 라우트(/api/characters,
+                   /api/scenes)와 배선(#folderCharacterAdd, #folderSceneAdd)이 그대로 살아 있고
+                   요소가 DOM 에 남아 있어야 위쪽 비옵셔널 $() 배선이 깨지지 않는다.
+                   `open` 속성이 없으므로 기본 닫힘이다. 열 때만 목록을 요청한다. -->
+              <details class="legacy-section" id="projectFolderLegacySection">
+                <summary class="legacy-summary">
+                  <b>이전 방식의 프로젝트 자료</b>
+                  <small>캐릭터 정보 · 영상 컷 — 완성 영상과 레코드는 위의 영상 프로젝트 폴더에서 봅니다.</small>
+                </summary>
+                <div class="legacy-body">
+                  <section class="panel is-hidden" id="projectFolderPanel">
+                    <div class="panel-head">
+                      <div>
+                        <h2>이 프로젝트의 자료</h2>
+                        <p>캐릭터 정보와 지금까지 만든 영상 컷을 모아 둡니다.</p>
+                      </div>
+                      <span class="stage-badge" id="folderCountBadge">캐릭터 0 · 영상 0</span>
+                    </div>
+
+                    <div class="folder-block">
+                      <div class="folder-head">
+                        <strong>캐릭터 정보</strong>
+                        <button class="outline-button" id="folderCharacterAdd" type="button">캐릭터 등록하기</button>
+                      </div>
+                      <div class="folder-list" id="folderCharacterList"></div>
+                    </div>
+
+                    <div class="folder-block">
+                      <div class="folder-head">
+                        <strong>영상 컷</strong>
+                        <button class="outline-button" id="folderSceneAdd" type="button">영상 만들기</button>
+                      </div>
+                      <div class="folder-list" id="folderSceneList"></div>
+                    </div>
+                  </section>
+                </div>
+              </details>
+
+              <!-- ---- 원본 자료 ---- -->
+              <section class="panel" id="sourcePanel">
+                <div class="panel-head">
+                  <div>
+                    <h2>원본 자료</h2>
+                    <p id="sourceHint">AI가 읽을 원본입니다.</p>
+                  </div>
+                  <span class="stage-badge" id="detailInputTypeBadge">진입점 1 · 웹툰 원작</span>
+                </div>
+                <div class="segmented input-type-switch" id="detailInputTypeOptions">
+                  <button type="button" data-value="webtoon">웹툰 원작</button>
+                  <button type="button" data-value="logline">소재 · 로그라인</button>
+                  <button type="button" data-value="treatment">트리트먼트</button>
+                  <button type="button" data-value="script">논의된 대본</button>
+                </div>
+                <textarea id="sourceText" rows="10" placeholder="가지고 계신 자료를 붙여넣으세요. 웹툰 회차 텍스트, 소재 메모, 트리트먼트, 미리 논의된 대본 모두 가능합니다."></textarea>
+                <div class="panel-foot">
+                  <span class="detail-hint" id="sourceStatus">저장된 자료가 없습니다.</span>
+                  <div class="detail-buttons" id="sourceButtons">
+                    <label class="upload-cover" id="sourceUploadLabel">
+                      텍스트 파일 불러오기
+                      <input id="sourceFile" type="file" accept=".txt,.md,.markdown,.text" class="sr-only-focusable">
+                    </label>
+                    <button class="primary-button" id="sourceSave" type="button">자료 저장</button>
+                  </div>
+                </div>
+              </section>
+
+              <!-- ---- 기획 방향 ---- -->
+              <section class="panel" id="directionPanel">
+                <div class="panel-head">
+                  <div>
+                    <h2>기획 방향</h2>
+                    <p>여기에 적은 지시가 트리트먼트와 대본 생성에 그대로 반영됩니다.</p>
+                  </div>
+                </div>
+                <div class="direction-grid">
+                  <div class="direction-field">
+                    <label class="field-label" for="directionPlatform">타겟 플랫폼</label>
+                    <div class="input-wrap"><input id="directionPlatform" type="text" maxlength="40" placeholder="예: 넷플릭스, 티빙, 웨이브"></div>
+                  </div>
+                  <div class="direction-field">
+                    <label class="field-label" for="directionEpisodes">에피소드 수</label>
+                    <div class="input-wrap"><input id="directionEpisodes" type="number" min="1" max="24" step="1" placeholder="4"></div>
+                  </div>
+                  <div class="direction-field">
+                    <label class="field-label" for="directionGenres">장르</label>
+                    <div class="input-wrap"><input id="directionGenres" type="text" maxlength="200" placeholder="쉼표로 구분 · 예: 로맨스, 스릴러"></div>
+                  </div>
+                  <div class="direction-field">
+                    <label class="field-label" for="directionAudience">주 시청층</label>
+                    <div class="input-wrap"><input id="directionAudience" type="text" maxlength="100" placeholder="예: 20~30대 여성"></div>
+                  </div>
+                  <div class="direction-field wide">
+                    <label class="field-label" for="directionTone">톤앤매너</label>
+                    <div class="input-wrap"><input id="directionTone" type="text" maxlength="200" placeholder="예: 서늘하고 절제된, 감정은 폭발하는 지점만"></div>
+                  </div>
+                  <div class="direction-field wide">
+                    <label class="field-label" for="directionFree">추가 지시</label>
+                    <textarea id="directionFree" rows="4" maxlength="2000" placeholder="원작에서 반드시 살릴 요소, 피할 설정, 참고 작품 등 자유롭게 적어주세요."></textarea>
+                  </div>
+                </div>
+                <div class="panel-foot">
+                  <span class="detail-hint" id="directionHint"></span>
+                  <div class="detail-buttons" id="directionButtons">
+                    <button class="primary-button" id="directionSave" type="button">방향 저장</button>
+                  </div>
+                </div>
+              </section>
+
+              <!-- ---- AI 작업 ---- -->
+              <section class="panel" id="documentsPanel">
+                <div class="panel-head">
+                  <div>
+                    <h2>AI 작업</h2>
+                    <p id="documentsHint">가진 자료를 바탕으로 AI가 이어서 진행할 단계입니다.</p>
+                  </div>
+                </div>
+                <div class="doc-steps" id="documentSteps"></div>
+                <p class="field-hint is-hidden" id="documentsEmpty">
+                  이 진입점에서 만들 수 있는 산출물이 아직 없습니다.
+                </p>
+              </section>
+
+              <!-- ---- 다음 단계로 보내기 ----
+                   Overlay 는 이 구획을 지우고 그 자리에 스토리 구획을 넣었지만, 삭제는 반영하지
+                   않는다(PRD H2). 아래 스토리·결과물 구획과 공존하고 app.js 의
+                   applyFeatureFlags() 가 신규 구획을 이 위로 올린다. -->
+              <!-- "이 프로젝트로 만들기"(숏폼·콘티·롱테이크·장면 영상화)는 2026-10-08 설계자 지시로 지웠다.
+                   옛 영상 API 를 부르던 화면으로 가서 헷갈렸다. 영상은 결과물 만들기의 "영상" 카드에서 만든다. -->
+
+              <!-- ---- 스토리 (개편) ----
+                   지시서 3절: 웹툰/트리트먼트/이미지 선택 구간을 삭제하고
+                   요약 스토리(작은 칸) + 실제 스토리(큰 칸 + 이미지 첨부) + 타입 버튼 3개로 바꾼다.
+                   단 이 병합본에서는 삭제를 반영하지 않아 위 handoffPanel 과 아래 모달의
+                   진입점 선택이 함께 남아 있다. -->
+              <section class="panel" id="storyPanel">
+                <div class="panel-head">
+                  <div>
+                    <h2>스토리</h2>
+                    <p>이 내용으로 로그라인 · 콘티 · 대본을 만듭니다.</p>
+                  </div>
+                  <span class="stage-badge" id="storyTypeBadge">타입 미선택</span>
+                </div>
+
+                <!-- 요약 스토리: 이미지 생성 참고용. 300자 상한이 기능 요구사항이다. -->
+                <label class="field-label" for="storySummary">
+                  요약 스토리 <small class="optional">이미지 생성 참고용</small>
+                </label>
+                <textarea class="panel-textarea" id="storySummary" rows="3" maxlength="300"
+                  placeholder="예: 재개발을 앞둔 창신동 골목에서 25년째 열쇠 가게를 지킨 여주가 사라진 손님의 열쇠로 과거 사건에 끌려 들어간다."></textarea>
+                <div class="story-summary-foot">
+                  <span class="field-hint tight" id="storySummaryCount">0 / 300자</span>
+                  <button class="text-action" id="storySummaryAuto" type="button">실제 스토리에서 자동 요약</button>
+                </div>
+
+                <div class="divider"></div>
+
+                <!-- 실제 스토리: 길이 제한 없음. S3에 저장된다. -->
+                <label class="field-label" for="storyText">실제 스토리 <small class="required">필수</small></label>
+                <textarea class="panel-textarea" id="storyText" rows="12"
+                  placeholder="대본, 트리트먼트, 로그라인을 그대로 붙여넣으세요. 길이 제한이 없습니다."></textarea>
+                <p class="field-hint tight" id="storyTextCount">0자</p>
+
+                <!-- 이미지 첨부 (최대 10장) -->
+                <div class="story-attach">
+                  <input id="storyFile" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+                  <button class="dropzone compact" id="storyDropzone" type="button">
+                    <div class="drop-empty">
+                      <span class="upload-icon"><svg viewBox="0 0 32 32"><path d="M16 21V6M10 12l6-6 6 6M7 19v6h18v-6"/></svg></span>
+                      <strong>웹툰 컷 · 캐릭터 시트 · 사진을 끌어놓으세요</strong>
+                      <p>최대 10장 · PNG, JPG, WEBP · 장당 20MB · 첨부하면 바로 분석합니다</p>
+                    </div>
+                  </button>
+                  <p class="field-hint tight name-hint">
+                    <b>파일 이름에 설명을 담아 주세요.</b>
+                    AI가 이름을 읽어 각 이미지의 역할을 판단합니다.
+                    예: <code>원본장면_비오는골목_밤.png</code>
+                  </p>
+                  <div class="story-cards" id="storyAssetCards"></div>
+                  <p class="field-hint is-hidden" id="storyAssetsEmpty">첨부한 이미지가 없습니다.</p>
+                </div>
+
+                <div class="divider"></div>
+
+                <!-- 스토리 타입: 필수 -->
+                <div class="step-heading">
+                  <span>03</span>
+                  <div><h2>스토리 타입 <small class="required">필수</small></h2>
+                  <p>지금 붙여넣은 원문이 무엇인지 알려 주세요. 결과물을 만드는 방식이 달라집니다.</p></div>
+                </div>
+                <div class="segmented" id="storyTypeOptions">
+                  <button type="button" data-value="script">대본</button>
+                  <button type="button" data-value="treatment">트리트먼트</button>
+                  <button type="button" data-value="logline">로그라인</button>
+                </div>
+
+                <div class="panel-foot">
+                  <span class="detail-hint" id="storyStatus"></span>
+                  <div class="detail-buttons" id="storyButtons">
+                    <button class="primary-button" id="storySave" type="button">스토리 저장</button>
+                  </div>
+                </div>
+              </section>
+
+              <!-- ---- 결과물 만들기 ---- -->
+              <section class="panel" id="outputsPanel">
+                <div class="panel-head">
+                  <div>
+                    <h2>결과물 만들기</h2>
+                    <p id="outputsHint">스토리를 저장한 뒤 만들 수 있습니다.</p>
+                  </div>
+                  <button class="outline-action" id="outputsRefresh" type="button">
+                    <svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18.6 7M17.9 15A7 7 0 0 1 5.4 17"/></svg> 새로고침
+                  </button>
+                </div>
+                <div class="handoff-grid">
+                  <button class="handoff-card" id="makeLogline" type="button">
+                    <span class="handoff-icon"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h7"/></svg></span>
+                    <strong>로그라인</strong>
+                    <small>서로 다른 각도의 3안</small>
+                  </button>
+                  <button class="handoff-card" id="makeStoryboard" type="button"
+                    aria-expanded="false" aria-controls="storyCutOptions">
+                    <span class="handoff-icon"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M9 5v14M15 5v14"/></svg></span>
+                    <strong>콘티</strong>
+                    <small>컷별 그림 + 설명 기획표</small>
+                  </button>
+                  <button class="handoff-card" id="makeScript" type="button">
+                    <span class="handoff-icon"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/></svg></span>
+                    <strong>대본</strong>
+                    <small>회차별 · 아웃라인 승인 후 생성</small>
+                  </button>
+                  <!-- 영상(설계자 2026-10-08): 이 스토리·첨부 이미지·바이블 캐릭터로 영상 만들기 계획을 만들고 연다. -->
+                  <button class="handoff-card is-hidden" id="makeVideo" type="button">
+                    <span class="handoff-icon"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="m17 10 4-2.5v9L17 14"/><path d="m8.5 9.5 4 2.5-4 2.5v-5Z"/></svg></span>
+                    <strong>영상</strong>
+                    <small>스토리 · 이미지 · 캐릭터로 영상 만들기</small>
+                  </button>
+                </div>
+
+                <!-- 콘티 옵션. 기존 옵션(컷 수)을 유지하되 [콘티]를 고른 뒤에만 펼친다.
+                     항상 보이면 [로그라인]·[대본]을 눌렀을 때도 컷 수 칸이 남아
+                     이것이 어느 결과물의 설정인지 알 수 없다. -->
+                <div class="storyboard-options is-hidden" id="storyCutOptions">
+                  <div class="storyboard-options-head">
+                    <strong>콘티 옵션</strong>
+                    <button class="text-action" id="storyCutClose" type="button">접기</button>
+                  </div>
+                  <fieldset>
+                    <legend>몇 컷으로 볼까요</legend>
+                    <div class="segmented" id="storyCutCounts"></div>
+                  </fieldset>
+                  <p class="field-hint tight" id="storyCutHint"></p>
+                  <div class="storyboard-options-foot">
+                    <button class="primary-button" id="storyCutRun" type="button">콘티 만들기</button>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+                <div class="story-outputs" id="storyOutputList"></div>
+                <p class="field-hint is-hidden" id="storyOutputsEmpty">아직 만든 결과물이 없습니다.</p>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 스튜디오 ============ -->
+        <section class="view" id="studioView" data-view="studio">
+          <div class="page-intro">
+            <!--
+              영상 기능이 둘이라 어느 쪽을 골라야 하는지 화면에서 알려 준다.
+              예전에는 두 화면 모두 "영상을 만듭니다"로만 적혀 있어서, 이름만 다른 같은
+              기능처럼 보였다("새 영상 만들기" vs "NEW_영상 제작"). 무엇이 다른지 모르면
+              5초짜리 짧은 컷이 필요한 사람이 15분 걸리는 GPU 경로로 들어간다.
+            -->
+            <div>
+              <span class="eyebrow dark"><i></i> BEDROCK · BETA</span>
+              <h1>영상 만들기 <small class="beta-tag">BETA</small></h1>
+              <!-- 발주 요청: 이 화면은 AWS Bedrock 영상 모델을 직접 써 보게 하는 체험 기능이다.
+                   본 제작 흐름(로그라인·콘티·대본)과 목적이 다르다는 것을 위에서 밝힌다. -->
+              <div class="beta-banner" role="note">
+                <strong>AWS Bedrock 모델 체험 기능입니다.</strong>
+                <p>
+                  AWS Bedrock의 영상 생성 모델을 직접 써 보실 수 있도록 제공하는 베타 기능입니다.
+                  결과물의 품질과 처리 시간은 모델에 따라 달라지며, 실제 제작에는
+                  프로젝트의 <strong>로그라인 · 콘티 · 대본</strong>을 사용하세요.
+                </p>
+              </div>
+              <p>
+                이미지를 올리고 원하는 움직임을 설명하면 영상 생성을 시작합니다.
+                <strong>5초 또는 9초</strong>의 짧은 컷을 <strong>2~5분</strong>에 만듭니다.
+                여러 컷을 이어 붙인 긴 영상(롱테이크)도 이 화면에서 만듭니다.
+              </p>
+              <p class="feature-compare" id="studioGpuCompare">
+                원작 웹툰의 화풍과 캐릭터를 그대로 유지해야 한다면
+                <button type="button" class="link-action" data-view-jump="videoNew">NEW_영상 제작</button>
+                을 쓰세요. 자체 GPU라 더 오래 걸리지만 원작 화풍을 지킵니다.
+              </p>
+            </div>
+          </div>
+          <div class="studio-grid split-layout" data-split="studio">
+            <section class="panel creation-panel split-input">
+              <div class="step-heading"><span>01</span><div><h2>참고 이미지 <small class="optional">선택</small></h2><p>첫 프레임으로 쓸 장면입니다. 없으면 텍스트만으로도 만들 수 있습니다.</p></div></div>
+              <div class="segmented source-mode" id="frameModeOptions">
+                <button class="active" type="button" data-value="none">텍스트만</button>
+                <button type="button" data-value="upload">참고 이미지 올리기</button>
+                <button type="button" data-value="ai">AI 이미지로 만들기</button>
+              </div>
+
+              <div class="frame-mode-body is-hidden" id="frameUploadBlock">
+                <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+                <button class="dropzone compact" id="dropzone" type="button">
+                  <div class="drop-empty" id="dropEmpty">
+                    <span class="upload-icon"><svg viewBox="0 0 32 32"><path d="M16 21V6M10 12l6-6 6 6M7 19v6h18v-6"/></svg></span>
+                    <strong>이미지를 끌어놓거나 클릭하세요</strong>
+                    <p>최대 20장까지 함께 올릴 수 있습니다 · PNG, JPG, WEBP · 장당 20MB</p>
+                    <span class="outline-button">파일 선택</span>
+                  </div>
+                </button>
+                <p class="field-hint tight name-hint">
+                  <b>파일 이름에 설명을 담아 주세요.</b>
+                  AI가 이름을 읽어 각 이미지의 역할을 판단합니다.
+                  예: <code>원본장면_비오는골목_김남주_밤.png</code>, <code>캐릭터시트_김남주_3방향.png</code>
+                  — 이름이 자세할수록 분석이 정확해집니다.
+                </p>
+                <div class="ref-gallery is-hidden" id="studioGallery"></div>
+                <div class="ref-actions is-hidden" id="studioRefActions">
+                  <button class="outline-action" id="studioAnalyze" type="button">
+                    <svg viewBox="0 0 24 24"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM20 20l-4.2-4.2"/></svg>
+                    이미지 분석하기
+                  </button>
+                  <span class="detail-hint" id="studioAnalyzeStatus"></span>
+                </div>
+
+                <div class="ref-brief is-hidden" id="studioBrief">
+                  <div class="ref-brief-head">
+                    <h3>AI가 이해한 내용</h3>
+                    <button class="text-action" id="studioBriefClear" type="button">분석 지우기</button>
+                  </div>
+                  <p class="ref-brief-summary" id="studioBriefSummary"></p>
+                  <p class="field-hint tight" id="studioBriefPrimary"></p>
+                  <div class="ref-questions" id="studioQuestions"></div>
+                  <p class="field-hint tight" id="studioQuestionNote"></p>
+                </div>
+              </div>
+
+              <!-- AI로 첫 프레임을 만드는 경로. 만들 이미지의 프롬프트를 따로 받는다. -->
+              <div class="frame-mode-body is-hidden" id="frameAiBlock">
+                <label class="field-label" for="frameAiPrompt">만들 이미지 설명</label>
+                <textarea class="panel-textarea" id="frameAiPrompt" rows="3" maxlength="4000" placeholder="예: 비 내리는 골목에서 후드를 쓴 인물이 유리병을 들고 서 있다. 네온 간판이 젖은 바닥에 번진다."></textarea>
+                <p class="field-hint tight">그림체는 아래 03단계에서 적은 내용을 함께 사용합니다.</p>
+                <div class="frame-ai-actions">
+                  <button class="outline-action" id="frameAiGenerate" type="button">
+                    <svg viewBox="0 0 24 24"><path d="m12 2 1.5 5.2L19 9l-5.5 1.8L12 16l-1.5-5.2L5 9l5.5-1.8L12 2Z"/></svg> AI 이미지 만들기
+                  </button>
+                  <span class="detail-hint" id="frameAiStatus"></span>
+                </div>
+                <div class="frame-ai-result is-hidden" id="frameAiResult">
+                  <img id="frameAiImage" alt="AI로 만든 첫 프레임">
+                  <div>
+                    <strong id="frameAiLabel">-</strong>
+                    <small id="frameAiMeta"></small>
+                    <button class="text-action" id="frameAiRetry" type="button">다시 만들기</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="divider"></div>
+              <div class="step-heading"><span>02</span><div><h2>움직임 디렉션</h2><p>원하는 분위기와 카메라 움직임을 적어주세요.</p></div><small class="cache-badge"><svg viewBox="0 0 24 24"><path d="M5 8h14v11H5zM8 8V5h8v3"/></svg> 브라우저 자동 저장</small></div>
+              <div class="prompt-wrap">
+                <textarea id="promptInput" maxlength="600" placeholder="예: 인물의 머리카락이 바람에 부드럽게 흔들리고, 카메라가 천천히 얼굴 쪽으로 줌인합니다."></textarea>
+                <div class="prompt-foot"><span>추가 프롬프트는 이 브라우저에만 저장됩니다.</span><b><i id="promptCount">0</i>/600</b></div>
+              </div>
+              <div class="suggestions">
+                <button type="button" data-prompt="카메라가 인물 쪽으로 천천히 줌인합니다.">천천히 줌인</button>
+                <button type="button" data-prompt="머리카락과 옷자락이 바람에 자연스럽게 흔들립니다.">바람 효과</button>
+                <button type="button" data-prompt="배경의 빛이 은은하게 반짝이며 장면에 깊이감을 더합니다.">빛 반짝임</button>
+              </div>
+
+              <div class="divider"></div>
+              <div class="step-heading"><span>03</span><div><h2>그림체 <small class="optional">선택</small></h2><p>원하는 그림체를 적으면 프롬프트에 반영합니다.</p></div></div>
+              <textarea class="panel-textarea" id="videoStyle" rows="2" maxlength="1000" placeholder="예: 웹툰 원작 그림체 그대로 / 실사 드라마처럼 / 애니메이션 셀 느낌"></textarea>
+              <div class="style-chips" id="videoStyleChips"></div>
+
+              <div class="divider"></div>
+              <div class="step-heading"><span>04</span><div><h2>생성 모델</h2><p>사용할 Bedrock 모델을 선택하세요.</p></div></div>
+              <div class="model-picker" id="modelPicker"></div>
+
+              <div class="options-row">
+                <fieldset><legend>영상 길이</legend><div class="segmented" id="durationOptions"><button class="active" type="button" data-value="5">5초</button><button type="button" data-value="9">9초</button></div></fieldset>
+                <fieldset><legend>해상도</legend><div class="segmented" id="resolutionOptions"><button type="button" data-value="540p">540p</button><button class="active" type="button" data-value="720p">720p</button></div></fieldset>
+                <fieldset><legend>화면 비율</legend><div class="segmented" id="aspectOptions"><button class="active" type="button" data-value="16:9">16:9</button><button type="button" data-value="9:16">9:16</button><button type="button" data-value="1:1">1:1</button></div></fieldset>
+              </div>
+              <button class="primary-button generate-button" id="generateButton" type="button">
+                <span class="spark"><svg viewBox="0 0 24 24"><path d="m12 2 1.5 5.2L19 9l-5.5 1.8L12 16l-1.5-5.2L5 9l5.5-1.8L12 2Z"/></svg></span>
+                <span>영상 생성 시작</span><small>한 컷(5~9초)을 만듭니다</small>
+                <svg class="arrow" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+
+              <!-- 롱테이크: 컷을 여러 개 만들어 하나의 영상으로 이어 붙인다.
+                   지시서 0절이 롱폼 진입점을 숨기라고 했다. 마크업과 배선은 남기고
+                   app.js 의 applyFeatureFlags() 가 이 묶음에 is-hidden 을 붙인다 —
+                   삭제하면 startLongTake 와 목표 길이 배선이 함께 죽는다. -->
+              <div id="longTakeBlock">
+                <div class="divider"></div>
+                <div class="step-heading"><span>05</span><div><h2>롱테이크 <small class="optional">긴 영상</small></h2><p>장면을 여러 컷으로 나눠 만들고 하나로 이어 붙입니다.</p></div></div>
+                <div class="options-row">
+                  <fieldset><legend>목표 길이</legend><div class="segmented" id="longTargetOptions"></div></fieldset>
+                </div>
+                <p class="field-hint" id="longEstimate">목표 길이를 고르면 필요한 컷 수와 예상 시간을 알려드립니다.</p>
+                <button class="outline-action long-take-button" id="longTakeButton" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M4 6h16v12H4zM9 10l5 2-5 2v-4Z"/></svg> 롱테이크 만들기
+                </button>
+              </div>
+            </section>
+
+            <div class="split-bar" role="separator" tabindex="0" aria-orientation="vertical" aria-label="입력 영역과 결과 영역의 폭 조절 (좌우 화살표로 조절, Enter로 초기화)" aria-valuemin="25" aria-valuemax="75" aria-valuenow="62"></div>
+
+            <aside class="preview-column">
+              <section class="panel output-panel">
+                <div class="panel-title"><div><h2>결과</h2><p>생성된 영상이 여기에 표시됩니다.</p></div><span class="status-badge idle" id="previewStatus"><i></i> 대기 중</span></div>
+                <div class="output-stage" id="outputStage">
+                  <div class="empty-output" id="emptyOutput"><span><svg viewBox="0 0 36 36"><rect x="4" y="6" width="28" height="24" rx="4"/><path d="m15 13 9 5-9 5V13Z"/></svg></span><strong>아직 생성된 영상이 없어요</strong><p>이미지와 디렉션을 입력한 뒤<br>영상 생성을 시작해 보세요.</p></div>
+                  <video class="result-video is-hidden" id="resultVideo" controls preload="metadata"></video>
+                </div>
+                <div class="job-progress is-hidden" id="jobProgress">
+                  <div class="job-bar"><i id="jobBar"></i></div>
+                  <span id="jobLabel">생성 준비 중...</span>
+                </div>
+                <div class="output-meta"><span><i></i> <b id="selectedAspect">16:9</b></span><span><i></i> <b id="selectedDuration">5</b> sec</span><span><i></i> <b id="selectedResolution">720p</b></span></div>
+
+                <!-- AI가 다시 쓴 실제 전달 프롬프트. 결과가 기대와 다를 때 원인을 여기서 확인한다. -->
+                <details class="sent-prompt is-hidden" id="sentPromptBlock">
+                  <summary>모델에 전달된 프롬프트 보기</summary>
+                  <p id="sentPromptText"></p>
+                  <small id="sentPromptNote"></small>
+                </details>
+
+                <!-- 롱테이크 진행 상황. 컷 단위로 상태를 보여준다. -->
+                <div class="sequence-panel is-hidden" id="sequencePanel">
+                  <div class="sequence-head">
+                    <strong id="sequenceTitle">롱테이크 생성 중</strong>
+                    <span class="doc-chip" id="sequenceStatus">-</span>
+                  </div>
+                  <div class="job-bar"><i id="sequenceBar"></i></div>
+                  <p class="detail-hint" id="sequenceProgress"></p>
+                  <div class="sequence-shots" id="sequenceShots"></div>
+                  <p class="doc-step-error is-hidden" id="sequenceError"></p>
+                </div>
+              </section>
+              <section class="tip-card"><span><svg viewBox="0 0 24 24"><path d="M9 18h6M10 22h4M8.5 14.5A7 7 0 1 1 15.5 14.5c-.9.7-1.2 1.5-1.2 2.5h-4.6c0-1-.3-1.8-1.2-2.5Z"/></svg></span><div><strong>더 좋은 결과를 위한 팁</strong><p>업로드한 이미지를 AI가 직접 보고 영어 시네마틱 프롬프트로 다시 씁니다. 한국어로 원하는 움직임(카메라, 인물, 배경)만 적어주세요.</p></div></section>
+            </aside>
+          </div>
+        </section>
+
+        <!-- ============ 콘티 · 이미지 ============ -->
+        <section class="view" id="imageStudioView" data-view="imageStudio">
+          <div class="page-intro">
+            <div><span class="eyebrow dark"><i></i> STYLE TO IMAGE</span><h1>콘티와 장면 이미지를 만듭니다</h1><p>장면을 설명하고 원하는 그림체를 적으면, AI가 그림체를 판단해 알맞은 모델로 그립니다.</p></div>
+          </div>
+
+          <div class="studio-layout split-layout" data-split="imageStudio">
+            <section class="panel creation-panel split-input">
+              <div class="step-heading"><span>01</span><div><h2>장면 설명</h2><p>무엇이 보이는 장면인지 적어주세요.</p></div></div>
+              <textarea class="panel-textarea" id="imageScene" rows="4" maxlength="4000" placeholder="예: 비 내리는 골목에서 후드를 쓴 소녀가 유리병을 들고 서 있다. 네온 간판이 젖은 바닥에 번진다."></textarea>
+
+              <div class="divider"></div>
+              <div class="step-heading"><span>02</span><div><h2>그림체</h2><p>원하는 그림체를 자유롭게 적거나 아래에서 고르세요.</p></div></div>
+              <textarea class="panel-textarea" id="imageStyle" rows="3" maxlength="1000" placeholder="예: 웹툰 원작 느낌 그대로 깔끔한 선과 밝은 채색으로 / 80년대 홍콩 느와르처럼 흑백으로 / 연필 콘티 수준이면 충분해요"></textarea>
+              <div class="style-chips" id="stylePresetChips"></div>
+              <p class="field-hint" id="styleRouteHint">그림체를 적으면 AI가 프리셋과 모델 등급을 판단합니다. 프리셋을 직접 고르면 그 선택이 우선합니다.</p>
+
+              <div class="divider"></div>
+              <div class="step-heading"><span>03</span><div><h2>용도와 규격</h2><p>용도에 따라 품질 등급이 자동으로 정해집니다.</p></div></div>
+              <div class="options-row">
+                <fieldset><legend>용도</legend><div class="segmented" id="imagePurposeOptions"></div></fieldset>
+                <fieldset><legend>화면 비율</legend><div class="segmented" id="imageAspectOptions"><button class="active" type="button" data-value="16:9">16:9</button><button type="button" data-value="2:3">2:3</button><button type="button" data-value="1:1">1:1</button><button type="button" data-value="9:16">9:16</button></div></fieldset>
+              </div>
+
+              <!-- 콘티 옵션. 용도에서 '콘티'를 골랐을 때만 펼친다. 컷마다 그림 한 장을 만든다. -->
+              <div class="storyboard-options is-hidden" id="storyboardOptions">
+                <div class="segmented source-mode" id="sbModeOptions"></div>
+
+                <!-- AI가 나누는 경우: 컷 수를 고른다 -->
+                <div class="sb-mode-body" id="sbAutoBlock">
+                  <div class="options-row">
+                    <fieldset><legend>몇 컷으로 볼까요</legend><div class="segmented" id="sbCutOptions"></div></fieldset>
+                    <fieldset><legend>장면 설명 상세도</legend><div class="segmented" id="sbDetailOptions"></div></fieldset>
+                  </div>
+                  <p class="field-hint" id="sbDetailHint"></p>
+                </div>
+
+                <!-- 직접 적는 경우: 한 줄에 컷 하나. 적은 순서와 개수를 그대로 지킨다. -->
+                <div class="sb-mode-body is-hidden" id="sbManualBlock">
+                  <label class="field-label" for="sbManualCuts">컷 목록 (한 줄에 컷 하나)</label>
+                  <textarea class="panel-textarea" id="sbManualCuts" rows="7" maxlength="6000" placeholder="비 내리는 골목에 후드를 쓴 소녀가 유리병을 들고 서 있다&#10;뒤에서 발소리가 들리고 소녀가 병을 품에 감춘다&#10;검은 코트의 남자가 우산 없이 다가온다&#10;소녀가 골목 끝으로 달아난다"></textarea>
+                  <p class="field-hint tight" id="sbManualCount">적은 줄 수만큼 컷을 만듭니다. AI가 컷을 합치거나 늘리지 않습니다.</p>
+                </div>
+
+                <p class="field-hint" id="sbEstimate"></p>
+              </div>
+
+              <div class="divider"></div>
+              <div class="step-heading"><span>04</span><div><h2>원작 그림체 참조 <small class="optional">선택</small></h2><p>원작 컷을 넣으면 그 화풍을 그대로 따라 그립니다. 프롬프트로는 재현할 수 없는 부분입니다.</p></div></div>
+              <div class="reference-row">
+                <label class="upload-cover" id="referenceUploadLabel">
+                  참조 이미지 올리기
+                  <input id="referenceFile" type="file" accept="image/png,image/jpeg,image/webp" class="sr-only-focusable">
+                </label>
+                <div class="reference-preview is-hidden" id="referencePreview">
+                  <img alt="그림체 참조" id="referenceImage">
+                  <div>
+                    <strong id="referenceName">-</strong>
+                    <button class="text-action danger" id="referenceClear" type="button">참조 제거</button>
+                  </div>
+                </div>
+              </div>
+
+              <button class="primary-button generate-button" id="imageGenerateButton" type="button">
+                <span class="spark"><svg viewBox="0 0 24 24"><path d="m12 2 1.5 5.2L19 9l-5.5 1.8L12 16l-1.5-5.2L5 9l5.5-1.8L12 2Z"/></svg></span>
+                <span>이미지 생성</span><small>그림체를 판단해 모델을 고릅니다</small>
+                <svg class="arrow" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+              <button class="primary-button generate-button is-hidden" id="storyboardGenerateButton" type="button">
+                <span class="spark"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M9 5v14M15 5v14"/></svg></span>
+                <span>콘티 기획표 만들기</span><small id="sbButtonNote">컷마다 그림과 설명을 만듭니다</small>
+                <svg class="arrow" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+              <div class="login-error" id="imageError" role="alert"></div>
+            </section>
+
+            <div class="split-bar" role="separator" tabindex="0" aria-orientation="vertical" aria-label="입력 영역과 결과 영역의 폭 조절 (좌우 화살표로 조절, Enter로 초기화)" aria-valuemin="25" aria-valuemax="75" aria-valuenow="60"></div>
+
+            <aside class="preview-column">
+              <section class="panel output-panel">
+                <div class="panel-title"><div><h2>결과</h2><p>생성된 이미지가 여기에 표시됩니다.</p></div><span class="status-badge idle" id="imageStatus"><i></i> 대기 중</span></div>
+                <div class="output-stage" id="imageStage">
+                  <div class="empty-output" id="imageEmpty"><span><svg viewBox="0 0 36 36"><rect x="4" y="6" width="28" height="24" rx="4"/><path d="m10 24 7-8 5 6 3-3 5 5"/></svg></span><strong>아직 생성된 이미지가 없어요</strong><p>장면과 그림체를 적고<br>이미지 생성을 눌러보세요.</p></div>
+                  <img class="result-image is-hidden" id="resultImage" alt="생성된 이미지">
+                </div>
+                <div class="style-result is-hidden" id="styleResult">
+                  <div class="style-result-head">
+                    <span class="doc-chip ready" id="styleResultPreset">-</span>
+                    <span class="doc-chip" id="styleResultTier">-</span>
+                    <span class="doc-chip" id="styleResultSource">-</span>
+                  </div>
+                  <p id="styleResultReason"></p>
+                  <small id="styleResultModel"></small>
+                  <details class="doc-raw"><summary>전달된 프롬프트 보기</summary><pre id="styleResultPrompt"></pre></details>
+                  <div class="style-result-actions">
+                    <button class="text-action" id="useAsVideoFrame" type="button">이 이미지로 영상 만들기</button>
+                    <button class="text-action" id="useAsReference" type="button">이 그림체를 참조로 사용</button>
+                  </div>
+                </div>
+              </section>
+            </aside>
+          </div>
+
+          <!-- 콘티 기획표. 컷별 그림과 설명이 짝을 이루는 표. 인쇄해서 회의에 들고 간다. -->
+          <section class="panel storyboard-panel is-hidden" id="storyboardPanel">
+            <div class="panel-head">
+              <div>
+                <h2 id="sbTitle">콘티 기획표</h2>
+                <p class="field-hint" id="sbMeta"></p>
+              </div>
+              <div class="sb-actions">
+                <span class="doc-chip" id="sbStatus">-</span>
+                <button class="outline-action" id="sbPrint" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M7 8V3h10v5M7 18H5v-7h14v7h-2M7 14h10v7H7z"/></svg> 인쇄 · PDF
+                </button>
+                <button class="outline-action" id="sbAddCut" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> 컷 추가
+                </button>
+                <button class="text-action danger" id="sbDelete" type="button">콘티 삭제</button>
+              </div>
+            </div>
+            <div class="job-bar"><i id="sbBar"></i></div>
+            <p class="field-hint" id="sbProgress"></p>
+            <div class="sb-error is-hidden" id="sbError" role="alert"></div>
+
+            <div class="sb-sheet-head">
+              <span>Title : <b id="sbSheetTitle">-</b></span>
+              <span>Cuts : <b id="sbSheetCuts">-</b></span>
+              <span>Total : <b id="sbSheetSeconds">-</b></span>
+            </div>
+            <div class="sb-sheet-wrap">
+              <table class="sb-sheet">
+                <thead>
+                  <tr>
+                    <th class="sb-col-cut">Cut</th>
+                    <th class="sb-col-video">Video</th>
+                    <th class="sb-col-context">Context</th>
+                    <th class="sb-col-audio">Audio</th>
+                    <th class="sb-col-time">Time</th>
+                  </tr>
+                </thead>
+                <tbody id="sbBody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <div class="page-intro compact image-gallery-head">
+            <div><h2 class="usage-heading">생성한 이미지</h2></div>
+            <button class="outline-action" id="refreshImages"><svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18.6 7M17.9 15A7 7 0 0 1 5.4 17"/></svg> 새로고침</button>
+          </div>
+          <div class="image-grid" id="imageGrid"></div>
+          <div class="empty-block is-hidden" id="emptyImages">
+            <span><svg viewBox="0 0 32 32"><rect x="4" y="6" width="24" height="20" rx="3"/><path d="m9 21 6-7 4 5 3-3 4 5"/></svg></span>
+            <strong>생성한 이미지가 없습니다</strong>
+            <p>콘티나 장면 이미지를 만들어 보세요.</p>
+          </div>
+        </section>
+
+        <!-- ============ NEW_영상 제작 (자체 GPU / Wan 2.2 I2V-A14B) ============ -->
+        <!-- 지시서 1-3: 텍스트 입력 + 이미지 업로드 + 진행 상태 + 결과 미리보기·다운로드.
+             기존 스튜디오(Bedrock)와 화면·API가 섞이지 않게 별도 뷰로 둔다. -->
+        <section class="view" id="videoNewView" data-view="videoNew">
+          <div class="page-intro">
+            <div>
+              <span class="eyebrow dark"><i></i> WAN 2.2 I2V · SELF-HOSTED GPU</span>
+              <h1>웹툰 컷을 그대로 움직여 봅니다</h1>
+              <p>
+                자체 GPU에 올린 Wan 2.2 모델이 원작의 화풍과 캐릭터를 유지한 채 영상을 만듭니다.
+                이미지가 <strong>반드시</strong> 필요하고, 한 건에 <strong>10~20분</strong> 걸립니다.
+              </p>
+              <p class="feature-compare">
+                짧은 컷을 빠르게 여러 개 뽑거나 긴 영상을 이어 붙이려면
+                <button type="button" class="link-action" data-view-jump="studio">새 영상 만들기</button>
+                를 쓰세요. Bedrock 경로라 2~5분에 끝납니다.
+              </p>
+            </div>
+            <button class="outline-action" id="wanRefresh" type="button">
+              <svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18.6 7M17.9 15A7 7 0 0 1 5.4 17"/></svg> 새로고침
+            </button>
+          </div>
+
+          <!-- GPU 서버 상태. 노드가 스케줄로 꺼져 있으면 여기서 먼저 알려 준다. -->
+          <div class="wan-server" id="wanServer">
+            <span class="doc-chip" id="wanServerChip">확인 중</span>
+            <p id="wanServerNote">GPU 추론 서버 상태를 확인하고 있습니다.</p>
+          </div>
+
+          <div class="studio-grid split-layout" data-split="videoNew">
+            <section class="panel creation-panel split-input">
+              <div class="step-heading">
+                <span>01</span>
+                <div><h2>원본 이미지 <small class="required">필수</small></h2>
+                <p>웹툰 컷, 일러스트, 캐릭터 구성도, 컨셉 아트를 올려 주세요. 이 이미지가 첫 프레임이 됩니다.</p></div>
+              </div>
+              <input id="wanFile" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+              <button class="dropzone compact" id="wanDropzone" type="button">
+                <div class="drop-empty" id="wanDropEmpty">
+                  <span class="upload-icon"><svg viewBox="0 0 32 32"><path d="M16 21V6M10 12l6-6 6 6M7 19v6h18v-6"/></svg></span>
+                  <strong>이미지를 끌어놓거나 클릭하세요</strong>
+                  <p>최대 20장까지 함께 올릴 수 있습니다 · JPG · PNG · WEBP · 장당 20MB</p>
+                </div>
+              </button>
+              <!-- 파일 이름이 분석의 근거다. S3 키에서는 한글이 사라지므로 업로드 시점에
+                   원본 이름을 따로 보존한다(server.s3_original_name). -->
+              <p class="field-hint tight name-hint">
+                <b>파일 이름에 설명을 담아 주세요.</b>
+                AI가 이름을 읽어 각 이미지의 역할을 판단합니다.
+                예: <code>원본장면_비오는골목_김남주_밤.png</code>, <code>캐릭터시트_김남주_3방향.png</code>
+                — 이름이 자세할수록 분석이 정확해집니다.
+              </p>
+              <div class="ref-gallery is-hidden" id="wanGallery"></div>
+              <div class="ref-actions is-hidden" id="wanRefActions">
+                <button class="outline-action" id="wanAnalyze" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM20 20l-4.2-4.2"/></svg>
+                  이미지 분석하기
+                </button>
+                <span class="detail-hint" id="wanAnalyzeStatus"></span>
+              </div>
+              <!-- 분석을 건너뛴 채 생성하면 startWanGeneration 이 한 번 확인한다.
+                   그 동작을 미리 알려 주지 않으면 갑자기 뜨는 대화상자로 읽힌다. -->
+              <p class="field-hint tight" id="wanAnalyzeSkipHint">
+                분석하지 않고 <b>영상 만들기</b>를 누르면 진행할지 한 번 확인합니다.
+                그때 <b>예</b>를 고르면 분석을 자동으로 하고 이어서 만듭니다.
+              </p>
+
+              <!-- 분석 결과와 확인 질문. 모든 질문은 건너뛸 수 있다. -->
+              <div class="ref-brief is-hidden" id="wanBrief">
+                <div class="ref-brief-head">
+                  <h3>AI가 이해한 내용</h3>
+                  <button class="text-action" id="wanBriefClear" type="button">분석 지우기</button>
+                </div>
+                <p class="ref-brief-summary" id="wanBriefSummary"></p>
+                <p class="field-hint tight" id="wanBriefPrimary"></p>
+                <div class="ref-questions" id="wanQuestions"></div>
+                <p class="field-hint tight" id="wanQuestionNote"></p>
+              </div>
+
+              <div class="divider"></div>
+              <div class="step-heading">
+                <span>02</span>
+                <div><h2>대본 · 지문 · 컨셉 설명</h2>
+                <p>대본이나 트리트먼트를 그대로 붙여넣어도 됩니다. AI가 한 장면으로 골라 영상 프롬프트로 바꿉니다.</p></div>
+              </div>
+              <textarea class="panel-textarea" id="wanText" rows="7" maxlength="20000"
+                placeholder="예: 여주는 접견실 철문이 열리는 소리에 고개를 든다. 다리를 절룩이며 들어온 남자를 보고 표정이 굳는다. 2개월 전의 진우가 아니다."></textarea>
+              <p class="field-hint tight" id="wanTextCount">0 / 20,000자</p>
+
+              <div class="divider"></div>
+              <div class="step-heading">
+                <span>03</span>
+                <div><h2>화풍 유지 지시 <small class="optional">선택</small></h2>
+                <p>원작 화풍을 어떻게 유지할지 적으면 프롬프트에 반영합니다.</p></div>
+              </div>
+              <textarea class="panel-textarea" id="wanStyle" rows="2" maxlength="400"
+                placeholder="예: 원작 웹툰의 선과 채색을 그대로 유지 / 실사 드라마 톤으로"></textarea>
+              <div class="style-chips" id="wanStyleChips"></div>
+
+              <!-- 2단계 파이프라인의 1단계.
+                   Wan I2V 는 첫 프레임을 유지하며 움직임만 만들므로 영상 품질의 상한이
+                   첫 프레임으로 정해진다. 웹툰 컷을 그대로 넣으면 웹툰이 움직이는 영상이 된다.
+                   여기서 구도를 유지한 채 화풍을 바꿔 스틸을 만들고, 그것을 보고 승인한 뒤
+                   영상을 만든다. 나쁜 첫 프레임으로 GPU 를 수십 분 돌리지 않기 위한 것이다. -->
+              <div class="divider"></div>
+              <div class="step-heading">
+                <span>04</span>
+                <div><h2>화풍 변환 <small class="optional">선택</small></h2>
+                <p>구도를 유지하면서 첫 프레임의 화풍만 바꿉니다. 결과를 확인한 뒤 영상을 만듭니다.</p></div>
+              </div>
+              <div class="options-row">
+                <fieldset><legend>변환 모드</legend><div class="segmented" id="wanConvertModes"></div></fieldset>
+                <fieldset id="wanStrengthField" class="is-hidden">
+                  <legend>구도 유지 강도 <b id="wanStrengthValue">0.60</b></legend>
+                  <input type="range" id="wanStrength" min="0.2" max="0.9" step="0.05" value="0.6">
+                </fieldset>
+              </div>
+              <p class="field-hint" id="wanConvertHint"></p>
+              <!--
+                변환 모델을 쓸 수 없을 때의 안내. 서버가 convert.available 로 알려 준다.
+                모드 목록은 정적 표라서 목록이 내려오는 것만으로는 쓸 수 있다는 뜻이 아니다.
+                이 안내가 없던 동안 사용자는 미리보기를 누른 뒤에야 실패를 봤다.
+              -->
+              <p class="convert-unavailable is-hidden" id="wanConvertUnavailable" role="alert"></p>
+              <div class="convert-actions is-hidden" id="wanConvertActions">
+                <button class="outline-action" id="wanConvertRun" type="button">
+                  <svg viewBox="0 0 24 24"><path d="m12 2 1.5 5.2L19 9l-5.5 1.8L12 16l-1.5-5.2L5 9l5.5-1.8L12 2Z"/></svg>
+                  <span id="wanConvertRunLabel">화풍 변환 미리보기</span>
+                </button>
+                <span class="detail-hint" id="wanConvertStatus"></span>
+              </div>
+              <div class="convert-result is-hidden" id="wanConvertResult">
+                <img id="wanConvertImage" alt="화풍을 변환한 첫 프레임">
+                <div>
+                  <strong id="wanConvertLabel">-</strong>
+                  <small id="wanConvertMeta"></small>
+                  <div class="convert-result-actions">
+                    <button class="text-action" id="wanConvertRetry" type="button">다시 만들기</button>
+                    <button class="text-action" id="wanConvertDiscard" type="button">원본으로 되돌리기</button>
+                  </div>
+                  <details id="wanConvertPromptBlock">
+                    <summary>사용된 프롬프트 보기</summary>
+                    <pre id="wanConvertPrompt"></pre>
+                  </details>
+                </div>
+              </div>
+
+              <div class="divider"></div>
+              <div class="step-heading">
+                <span>05</span>
+                <div><h2>해상도와 길이</h2><p>480p가 기본입니다. 720p는 시간이 두 배 이상 걸립니다.</p></div>
+              </div>
+              <div class="options-row">
+                <fieldset>
+                  <legend>해상도</legend>
+                  <div class="segmented" id="wanResolutionOptions"></div>
+                  <!-- 비율은 선택지가 아니라 올린 이미지가 정한다. 문구는 서버가 내려 준다. -->
+                  <p class="field-note" id="wanAspectNote" hidden></p>
+                </fieldset>
+                <fieldset><legend>길이</legend><div class="segmented" id="wanDurationOptions"></div></fieldset>
+              </div>
+              <p class="field-hint" id="wanEstimate"></p>
+
+              <button class="primary-button generate-button" id="wanGenerateButton" type="button">
+                <span class="spark"><svg viewBox="0 0 24 24"><path d="m12 2 1.5 5.2L19 9l-5.5 1.8L12 16l-1.5-5.2L5 9l5.5-1.8L12 2Z"/></svg></span>
+                <span>영상 만들기</span><small id="wanButtonNote">자체 GPU에서 생성합니다</small>
+                <svg class="arrow" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+              <div class="login-error" id="wanError" role="alert"></div>
+            </section>
+
+            <div class="split-bar" role="separator" tabindex="0" aria-orientation="vertical" aria-label="입력 영역과 결과 영역의 폭 조절 (좌우 화살표로 조절, Enter로 초기화)" aria-valuemin="25" aria-valuemax="75" aria-valuenow="62"></div>
+
+            <aside class="preview-column">
+              <section class="panel output-panel">
+                <div class="panel-title">
+                  <div><h2>결과</h2><p>생성된 영상이 여기에 표시됩니다.</p></div>
+                  <span class="status-badge idle" id="wanStatus"><i></i> 대기 중</span>
+                </div>
+                <div class="output-stage" id="wanStage">
+                  <div class="empty-output" id="wanEmpty">
+                    <span><svg viewBox="0 0 36 36"><rect x="4" y="8" width="20" height="20" rx="3"/><path d="m24 15 8-4v14l-8-4"/></svg></span>
+                    <strong>아직 만든 영상이 없어요</strong>
+                    <p>이미지를 올리고 장면을 설명해 보세요.</p>
+                  </div>
+                  <video class="result-video is-hidden" id="wanVideo" controls playsinline></video>
+                </div>
+                <div class="job-progress is-hidden" id="wanProgress">
+                  <div class="job-bar"><i id="wanBar"></i></div>
+                  <p id="wanProgressLabel">준비 중</p>
+                </div>
+                <div class="sent-prompt is-hidden" id="wanPromptBlock">
+                  <h3>모델에 전달된 프롬프트</h3>
+                  <pre id="wanPromptText"></pre>
+                  <p class="field-hint" id="wanPromptNote"></p>
+                </div>
+                <div class="sent-prompt is-hidden" id="wanBoostBlock">
+                  <h3>AI가 자세하게 다시 쓴 입력</h3>
+                  <div id="wanBoostBody"></div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-head">
+                  <div><h2>최근 작업</h2><p class="field-hint">이 화면을 벗어나도 계속 진행됩니다.</p></div>
+                </div>
+                <div class="wan-jobs" id="wanJobList"></div>
+                <p class="field-hint is-hidden" id="wanJobsEmpty">아직 작업이 없습니다.</p>
+              </section>
+            </aside>
+          </div>
+        </section>
+
+        <!-- ============ 새로운 영상 만들기 (scene_video, Seedance 2.0) ============
+             붙였다 뗄 수 있는 독립 기능. 이 section + 사이드바 버튼 + scene.js 만 지우면
+             기능 전체가 떨어진다. null 가드: 이 section이 없어도 scene.js는 $() 결과가
+             null이면 아무 것도 하지 않도록 짜여 있어 다른 화면에는 영향이 없다. -->
+        <section class="view" id="sceneVideoView" data-view="sceneVideo">
+          <div class="page-intro">
+            <div>
+              <span class="eyebrow dark"><i></i> SEEDANCE 2.0 · SAAS</span>
+              <h1>새로운 영상 만들기</h1>
+              <p>
+                캐릭터 정보 + 웹툰 컷(최대 30장) + 대본/지문으로 장면 영상 1편을 만듭니다.
+                웹툰에 없는 샷(카메라 구도·배경·동작)도 만들 수 있습니다.
+              </p>
+              <p class="feature-compare" id="sceneModeNotice"></p>
+              <p class="feature-compare is-hidden" id="sceneProjectNotice"></p>
+            </div>
+            <button class="outline-action" id="sceneRefresh" type="button">
+              <svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18.6 7M17.9 15A7 7 0 0 1 5.4 17"/></svg> 새로고침
+            </button>
+          </div>
+
+          <!-- ===== 컷 시퀀스로 만들기 (v3 M0) — 벤더 호출 0 =====
+               이 블록 + scene-cuts.js 만 지우면 이 경로가 떨어진다. 아래 기존 흐름
+               (캐릭터 -> 대본 -> 샷 직접 작성 -> Seedance)은 그대로 남는다.
+               null 가드: scene-cuts.js 는 el() 결과가 null 이면 아무 것도 하지 않는다. -->
+          <section class="panel creation-panel" id="cutsPanel">
+            <div class="step-heading">
+              <span>C</span>
+              <div>
+                <h2>웹툰 컷으로 만들기 <small class="optional">벤더 없이</small></h2>
+                <p>
+                  컷을 올리면 칸을 자동으로 나누고, 칸마다 한 샷씩 팬·줌(Ken Burns)으로 움직여
+                  1280×720 영상을 만듭니다. <strong>외부 생성 모델을 쓰지 않아 비용이 들지 않습니다.</strong>
+                  결과를 보고 나서 특정 샷만 Seedance로 다시 만들 수 있습니다.
+                </p>
+              </div>
+            </div>
+
+            <div class="ref-actions">
+              <input id="cutsFileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+              <button class="outline-action" id="cutsUploadButton" type="button">
+                <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> 컷 올리기
+              </button>
+              <button class="outline-action" id="cutsAutoPlanButton" type="button" disabled>샷 계획 만들기</button>
+              <button class="primary-action" id="cutsRenderButton" type="button" disabled>영상 만들기</button>
+            </div>
+
+            <p class="field-hint tight" id="cutsSummary">컷을 올리면 칸을 자동으로 나눕니다.</p>
+            <p class="field-hint tight" id="cutsStatus"></p>
+            <p class="form-error" id="cutsError"></p>
+
+            <p class="detail-hint">
+              읽기 순서는 파일명이 아니라 아래 순서입니다. 끌어서 옮기거나 ↑↓ 로 바꿔 주세요.
+            </p>
+            <div class="cut-list" id="cutsList"></div>
+
+            <div class="is-hidden" id="cutsResult">
+              <div class="divider"></div>
+              <h3>결과</h3>
+              <video id="cutsVideo" controls preload="metadata" playsinline crossorigin="anonymous"></video>
+              <a class="outline-action is-hidden" id="cutsDownload" download="scene.mp4">영상 내려받기</a>
+            </div>
+          </section>
+
+          <div class="studio-grid split-layout" data-split="sceneVideo">
+            <section class="panel creation-panel split-input">
+              <!-- 1) 캐릭터 -->
+              <div class="step-heading">
+                <span>01</span>
+                <div><h2>캐릭터 <small class="optional">선택</small></h2>
+                <p>등장 캐릭터를 등록해 두면 여러 장면에서 같은 인물로 씁니다.</p></div>
+              </div>
+              <div class="ref-gallery" id="sceneCharacterList"></div>
+              <div class="ref-actions">
+                <button class="outline-action" id="sceneCharacterAdd" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                  캐릭터 추가
+                </button>
+              </div>
+              <div class="ref-brief is-hidden" id="sceneCharacterForm">
+                <div class="ref-brief-head">
+                  <h3>새 캐릭터</h3>
+                  <button class="text-action" id="sceneCharacterCancel" type="button">취소</button>
+                </div>
+                <input class="panel-input" id="sceneCharacterName" type="text" maxlength="80" placeholder="이름 (예: 여의준)">
+                <input class="panel-input" id="sceneCharacterRole" type="text" maxlength="40" placeholder="역할 (예: 남주1, 선택)">
+                <textarea class="panel-textarea" id="sceneCharacterAppearance" rows="3" maxlength="2000"
+                  placeholder="외형 텍스트: 예) 20대 후반, 짙은 갈색 단발, 마른 체형, 편의점 유니폼"></textarea>
+                <label class="field-label" for="sceneCharacterRefFiles">참조 이미지 (선택, 최대 3장)</label>
+                <input id="sceneCharacterRefFiles" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+                <button class="outline-action" id="sceneCharacterRefPick" type="button">이미지 선택</button>
+                <p class="field-hint tight" id="sceneCharacterRefPreview"></p>
+                <button class="outline-action" id="sceneCharacterSave" type="button">캐릭터 저장</button>
+              </div>
+
+              <div class="divider"></div>
+
+              <!-- 2) 대본/지문 -->
+              <div class="step-heading">
+                <span>02</span>
+                <div><h2>대본 · 지문 <small class="required">필수</small></h2>
+                <p>이 장면의 대본이나 지문을 적어 주세요.</p></div>
+              </div>
+              <textarea class="panel-textarea" id="sceneScript" rows="6" maxlength="4000"
+                placeholder="예: 의준이 편의점 문을 열고 들어온다. 건우가 계산대 너머로 그를 바라본다."></textarea>
+
+              <div class="divider"></div>
+
+              <!-- 3) 스타일 -->
+              <div class="step-heading">
+                <span>03</span>
+                <div><h2>스타일</h2><p>웹툰 그림체 애니메이션 또는 실사화 중에서 고릅니다.</p></div>
+              </div>
+              <div class="segmented" id="sceneStyleOptions"></div>
+
+              <div class="divider"></div>
+
+              <!-- 4) 샷 리스트 -->
+              <div class="step-heading">
+                <span>04</span>
+                <div><h2>샷 리스트</h2><p><strong>샷</strong> = 카메라를 끊지 않고 찍는 한 조각(4~15초). 장면은 샷 여러 개로 이어집니다.</p></div>
+              </div>
+              <div id="sceneShotList"></div>
+              <div class="ref-actions">
+                <button class="outline-action" id="sceneShotAdd" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                  샷 추가
+                </button>
+              </div>
+              <p class="field-hint" id="sceneCostEstimate"></p>
+
+              <button class="primary-button generate-button" id="sceneCreateButton" type="button">
+                <span class="spark"><svg viewBox="0 0 24 24"><path d="m12 2 1.5 5.2L19 9l-5.5 1.8L12 16l-1.5-5.2L5 9l5.5-1.8L12 2Z"/></svg></span>
+                <span>영상 만들기</span><small id="sceneButtonNote">샷 플랜을 저장하고 생성을 시작합니다</small>
+                <svg class="arrow" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+              <div class="login-error" id="sceneError" role="alert"></div>
+            </section>
+
+            <div class="split-bar" role="separator" tabindex="0" aria-orientation="vertical" aria-label="입력 영역과 결과 영역의 폭 조절" aria-valuemin="25" aria-valuemax="75" aria-valuenow="62"></div>
+
+            <aside class="preview-column">
+              <section class="panel output-panel">
+                <div class="panel-title">
+                  <div><h2>결과</h2><p>완성된 장면 영상과 샷별 상태가 여기에 표시됩니다.</p></div>
+                  <span class="status-badge idle" id="sceneStatus"><i></i> 대기 중</span>
+                </div>
+                <div class="output-stage" id="sceneStage">
+                  <div class="empty-output" id="sceneEmpty">
+                    <span><svg viewBox="0 0 36 36"><rect x="4" y="8" width="20" height="20" rx="3"/><path d="m24 15 8-4v14l-8-4"/></svg></span>
+                    <strong>아직 만든 영상이 없어요</strong>
+                    <p>대본을 적고 샷을 추가해 보세요.</p>
+                  </div>
+                  <video class="result-video is-hidden" id="sceneVideo" controls playsinline></video>
+                </div>
+                <div class="job-progress is-hidden" id="sceneProgress">
+                  <div class="job-bar"><i id="sceneBar"></i></div>
+                  <p id="sceneProgressLabel">준비 중</p>
+                </div>
+                <div id="sceneShotStatusList"></div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-head">
+                  <div><h2>최근 영상</h2><p class="field-hint">이 화면을 벗어나도 계속 진행됩니다.</p></div>
+                </div>
+                <div class="wan-jobs" id="sceneList"></div>
+                <p class="field-hint is-hidden" id="sceneListEmpty">아직 만든 영상이 없습니다.</p>
+              </section>
+            </aside>
+          </div>
+        </section>
+
+        <!-- ============ 라이브러리 ============ -->
+        <!-- ============ 영상 제작 (제품 6단계) ============
+             구 9단계 화면은 제거했다. 제작 시작·단계 전진·생성 제출 경로는 여기 하나뿐이다.
+             현재 단계는 서버(`story-session`)가 정하고 story-app.js 가 그린다.
+             기존 결과물 조회는 프로젝트 폴더(video-folder.js)가 읽기 전용으로 맡는다. -->
+        <!-- vpoc1 영상 기능. 화면 전체를 /vpoc.js 가 #vpoc-root 안에 직접 만든다.
+             app.js 는 switchView 에서 window.vpoc.mount(projectId) 만 부른다. -->
+        <section class="view" id="videoGenView" data-view="videoGen">
+          <div id="vpoc-root" class="vpoc-root">
+            <p class="vpoc-boot">영상 기능 준비 중</p>
+          </div>
+        </section>
+
+        <!-- Legacy 결과·진행 작업 복구 전용. 신규 제작 입력은 production.js가 숨기고
+             기존 ID/task/result의 조회·취소·승인·검수만 유지한다. -->
+        <section class="view" id="sceneProductionView" data-view="sceneProduction" data-recovery-only="true">
+          <div class="page-intro">
+            <div>
+              <span class="eyebrow dark"><i></i> LEGACY RECOVERY · READ/CONTINUE</span>
+              <h1>기존 영상 작업 복구</h1>
+              <p>이미 존재하는 작업의 상태·결과를 열고 취소·승인·검수를 이어갑니다. 새 제작은 이 화면에서 시작하지 않습니다.</p>
+              <p class="feature-compare">기존 scene ID, provider task ID, 결과 key와 버전을 그대로 사용합니다.</p>
+            </div>
+            <button class="outline-action" id="productionRefresh" type="button">새로고침</button>
+            <!-- 진행 중 작업을 건드리지 않고 입력 화면만 다시 연다. 이 버튼이 없던
+                 동안에는 제작을 한 번 시작하면 새 제작을 시작할 방법이 없었다. -->
+            <button class="outline-action is-hidden" id="productionNewRun" type="button">새 제작 시작</button>
+            <!-- 첫 단계 이후에만 보인다. 숨긴 화면을 되살리는 것이 아니라 서버의 현재
+                 단계와 실행 중 작업까지 함께 되돌린다. -->
+            <button class="outline-action is-hidden" id="productionStepBack" type="button">이전 단계로 넘어가기</button>
+            <!-- 실행 중일 때만 보인다. 폴링만 멈추는 것이 아니라 서버에 취소를 저장한다. -->
+            <button class="text-action is-hidden" id="productionCancel" type="button">제작 취소</button>
+          </div>
+          <!-- 이 프로젝트의 제작 목록. 생성 중인 작업을 다시 열 수 있는 경로다. -->
+          <ul class="field-hint production-run-list" id="productionRunList"></ul>
+          <div class="production-stage" id="productionProgress">
+            <span class="doc-chip" id="productionStage">새 제작</span>
+            <p id="productionStageDetail">장면 설명과 이미지를 입력해 시작하세요.</p>
+          </div>
+          <section class="panel creation-panel" id="productionIntake">
+            <div class="step-heading"><span>01</span><div><h2>장면 설명과 이미지</h2><p>웹툰 컷·일러스트·사진은 선택입니다. 텍스트만으로 시작하면 기준 이미지를 먼저 만듭니다.</p></div></div>
+            <label class="field-label" for="productionDescription">장면 설명 <small class="optional">이미지가 있으면 짧아도 됩니다</small></label>
+            <textarea class="panel-textarea" id="productionDescription" rows="6" maxlength="4000" placeholder="예: 두 남성이 카페 창가에 앉아 있다. 한 사람이 조용히 컵을 들어 상대를 바라본다."></textarea>
+            <label class="field-label" for="productionStyle">표현 방식</label>
+            <select class="panel-input" id="productionStyle"><option value="anime">웹툰·애니 스타일</option><option value="live_action">실사 스타일</option></select>
+            <input id="productionFiles" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+            <div class="ref-actions"><button class="outline-action" id="productionPickFiles" type="button">이미지 올리기</button><span class="field-hint" id="productionUploadStatus">이미지 없이도 시작할 수 있습니다.</span></div>
+            <div class="ref-gallery" id="productionUploadList"></div>
+            <button class="primary-button generate-button" id="productionStart" type="button"><span>분석 시작</span><small>필요한 질문만 이어서 보여 줍니다</small></button>
+          </section>
+          <section class="panel is-hidden" id="productionQuestions">
+            <div class="step-heading"><span>02</span><div><h2>필요한 확인</h2><p>이미 설명한 것은 다시 묻지 않습니다. 답하지 않아도 계획을 볼 수 있습니다.</p></div></div>
+            <div id="productionQuestionList"></div>
+            <button class="primary-button" id="productionAnswerSubmit" type="button">영상 계획 보기</button>
+          </section>
+          <section class="panel is-hidden" id="productionPlan">
+            <div class="step-heading"><span>03</span><div><h2>영상 계획</h2><p>관계는 입력 그대로 유지하고, 화면의 행동은 한 가지 동작으로 따로 계획합니다.</p></div></div>
+            <div id="productionPlanBody"></div>
+            <button class="primary-button" id="productionPlanApprove" type="button">계획 승인 · 기준 이미지 만들기</button>
+          </section>
+          <section class="panel is-hidden" id="productionReference">
+            <div class="step-heading"><span>04</span><div><h2>기준 이미지 검수</h2><p>만화 칸·글자·직접적 상처 표현·인물 구성을 먼저 확인합니다. 승인 전에는 I2V를 호출하지 않습니다.</p></div></div>
+            <img class="reference-preview is-hidden" id="productionReferenceImage" alt="생성된 기준 이미지">
+            <ul class="field-hint" id="productionReferenceChecks"></ul>
+            <button class="primary-button" id="productionReferenceApprove" type="button">기준 이미지 승인 · I2V 영상 만들기</button>
+          </section>
+          <section class="panel is-hidden" id="productionResult">
+            <div class="step-heading"><span>05</span><div><h2>결과와 사람 검수</h2><p id="productionResultStatus">생성 상태를 확인하고 있습니다.</p></div></div>
+            <p class="field-hint" id="productionResultProgress"></p>
+            <div class="ref-actions is-hidden" id="productionFailedActions">
+              <button class="primary-button" id="productionRetry" type="button">같은 계획으로 다시 시도</button>
+              <button class="outline-action" id="productionReviseFromFailure" type="button">수정 요청 열기</button>
+            </div>
+            <video class="result-video is-hidden" id="productionVideo" controls playsinline></video>
+            <div class="is-hidden" id="productionReview">
+              <div class="divider"></div><h3>100점 리뷰</h3>
+              <label class="field-label" for="productionReviewScore">점수 <small>0~100 · 선택</small></label><input class="panel-input" id="productionReviewScore" type="number" min="0" max="100" placeholder="미평가">
+              <div id="productionAcceptanceDecision" class="is-hidden"><label class="field-label" for="productionReviewVerdict">결과 판단 <small>검수용 Luma 결과는 반드시 선택</small></label><select class="panel-input" id="productionReviewVerdict"><option value="">결과를 보고 선택해 주세요</option><option value="approved">이 결과 수락</option><option value="needs_revision">수정 요청</option></select><p class="field-hint tight">수락 전에는 이 결과가 완료본이나 다음 제작 메모의 근거가 되지 않습니다.</p></div>
+              <div class="options-row" id="productionReviewTags">
+                <label><input type="checkbox" value="requested_motion"> 요청 동작</label><label><input type="checkbox" value="character_consistency"> 캐릭터 일관성</label><label><input type="checkbox" value="camera"> 카메라</label><label><input type="checkbox" value="reference_image"> 기준 이미지</label><label><input type="checkbox" value="style"> 화풍</label><label><input type="checkbox" value="pacing"> 편집</label><label><input type="checkbox" value="missing_character"> 인물 누락</label><label><input type="checkbox" value="no_motion"> 동작 없음</label><label><input type="checkbox" value="unwanted_camera"> 원치 않은 카메라 이동</label><label><input type="checkbox" value="text_error"> 글자 오류</label>
+              </div>
+              <textarea class="panel-textarea" id="productionReviewComment" rows="4" maxlength="2000" placeholder="다음 제작에 반영할 구체적인 의견을 적어 주세요. 점수만으로 취향을 단정하지 않습니다."></textarea>
+              <label class="confirm-row"><input id="productionRemember" type="checkbox"><span>이 의견을 다음 제작에도 반영할 메모로 저장</span></label>
+              <select class="panel-input" id="productionMemoryScope"><option value="project">이 프로젝트</option><option value="global">내 모든 제작</option><option value="scene">이 장면만</option></select>
+              <button class="primary-button" id="productionReviewSave" type="button">리뷰 저장</button>
+              <button class="text-action" id="productionReviewDelete" type="button">리뷰 삭제</button>
+              <div class="divider"></div>
+              <div class="panel-head"><h3>수정 요청 · 다시 만들기</h3><span class="doc-chip" id="productionVersionChip">v0</span></div>
+              <p class="field-hint tight">고칠 항목을 고르면 무엇이 바뀌는지 먼저 보여 줍니다. 리뷰 저장만으로는 영상을 다시 만들지 않습니다.</p>
+              <div class="options-row" id="productionFixList"></div>
+              <label class="field-label" for="productionRevisionNotes">수정 요청 <small>선택 · 구체적으로 적으면 계획에 반영됩니다</small></label>
+              <textarea class="panel-textarea" id="productionRevisionNotes" rows="3" maxlength="2000" placeholder="예: 카메라는 고정하고, 고개를 돌리는 동작이 끝까지 보이게 해 주세요."></textarea>
+              <ul class="field-hint" id="productionRevisionEffects"></ul>
+              <button class="primary-button" id="productionRevise" type="button">이 수정사항으로 다시 만들기</button>
+              <ul class="field-hint production-memory-list" id="productionRevisionHistory"></ul>
+              <div class="divider"></div><div class="panel-head"><h3>적용 중인 제작 메모</h3><div><button class="text-action" id="productionMemoryRefresh" type="button">새로고침</button><button class="text-action" id="productionMemoryReset" type="button">범위 초기화</button></div></div><ul class="field-hint production-memory-list" id="productionMemoryList"></ul>
+            </div>
+          </section>
+          <p class="login-error" id="productionError" role="alert"></p>
+        </section>
+        <!-- ============ 라이브러리 ============ -->
+        <section class="view" id="libraryView" data-view="library">
+          <div class="page-intro compact">
+            <div><span class="eyebrow dark"><i></i> VIDEO LIBRARY</span><h1>영상 라이브러리</h1><p>S3의 사용자 전용 공간에 저장된 결과 영상입니다.</p></div>
+            <button class="outline-action" id="refreshLibrary"><svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18.6 7M17.9 15A7 7 0 0 1 5.4 17"/></svg> 새로고침</button>
+          </div>
+          <!-- 진행 중인 롱테이크. 완료되면 아래 목록으로 내려간다. -->
+          <section class="running-panel is-hidden" id="runningPanel">
+            <div class="panel-head">
+              <div>
+                <h2>생성 중</h2>
+                <p class="field-hint">화면을 벗어나거나 새로고침해도 계속 진행됩니다.</p>
+              </div>
+              <button class="outline-action" id="refreshRunning" type="button">새로고침</button>
+            </div>
+            <div class="running-list" id="runningList"></div>
+          </section>
+
+          <div class="video-grid" id="videoGrid"></div>
+          <div class="empty-block is-hidden" id="emptyLibrary">
+            <span><svg viewBox="0 0 32 32"><path d="M5 9h11l3 3h11v15H5V9Z"/><path d="m14 16 8 4-8 4v-8Z"/></svg></span>
+            <strong>저장된 영상이 없습니다</strong>
+            <p>스튜디오에서 첫 영상을 만들어 보세요.</p>
+          </div>
+        </section>
+
+        <!-- ============ 사용자 관리 (ADMIN) ============ -->
+        <section class="view" id="usersView" data-view="users">
+          <div class="page-intro compact">
+            <div><span class="eyebrow dark"><i></i> ADMIN ONLY</span><h1>사용자 관리</h1><p>회사 고유 코드와 사용자 계정을 관리합니다.</p></div>
+            <button class="outline-action" id="refreshUsers"><svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18.6 7M17.9 15A7 7 0 0 1 5.4 17"/></svg> 새로고침</button>
+          </div>
+
+          <section class="panel code-panel">
+            <div class="panel-title"><div><h2>회사 고유 코드</h2><p>회원가입 시 이 코드를 입력해야 계정이 만들어집니다.</p></div></div>
+            <form class="code-form" id="companyCodeForm">
+              <div class="input-wrap">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v10H4zM8 7V5h8v2M9 12h6"/></svg>
+                <input id="companyCodeInput" type="text" placeholder="예: WHYNOT-2026" required>
+              </div>
+              <button class="primary-button" type="submit">코드 저장</button>
+            </form>
+            <p class="field-hint">영문·숫자와 <code>. _ -</code> 조합 4~64자. 변경하면 이후 가입에 즉시 적용됩니다.</p>
+          </section>
+
+          <div class="model-table-wrap">
+            <table class="model-table">
+              <thead><tr><th>사용자</th><th>역할</th><th>생성 한도</th><th>프로젝트</th><th>가입일</th><th>최근 로그인</th><th>작업</th></tr></thead>
+              <tbody id="userTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ============ 모델 관리 (ADMIN) ============ -->
+        <section class="view" id="modelsView" data-view="models">
+          <div class="page-intro compact">
+            <div><span class="eyebrow dark"><i></i> ADMIN ONLY</span><h1>모델 관리</h1><p>Bedrock 모델을 등록하거나 교체합니다.</p></div>
+            <button class="outline-action" id="refreshModels"><svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18.6 7M17.9 15A7 7 0 0 1 5.4 17"/></svg> 새로고침</button>
+          </div>
+          <div class="model-table-wrap">
+            <table class="model-table">
+              <thead><tr><th>모델</th><th>용도</th><th>Bedrock ID</th><th>리전</th><th>출처</th><th>상태</th><th>작업</th></tr></thead>
+              <tbody id="modelTableBody"></tbody>
+            </table>
+          </div>
+
+          <!-- 사용량은 모델 관리와 같은 화면에 둔다. 관리자만 접근한다. -->
+          <div class="usage-section">
+            <div class="page-intro compact">
+            <div><h2 class="usage-heading">모델 사용량</h2><p class="field-hint">LLM 게이트웨이가 기록한 사용자별·모델별 토큰과 호출량입니다.</p></div>
+            <div class="usage-controls">
+              <div class="segmented" id="usageRangeOptions">
+                <button type="button" data-value="1">1일</button>
+                <button type="button" data-value="7">7일</button>
+                <button class="active" type="button" data-value="30">30일</button>
+                <button type="button" data-value="90">90일</button>
+              </div>
+              <button class="outline-action" id="refreshUsage"><svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18.6 7M17.9 15A7 7 0 0 1 5.4 17"/></svg> 새로고침</button>
+            </div>
+          </div>
+
+          <div class="usage-cards" id="usageTotals"></div>
+
+          <h2 class="usage-heading">사용자별</h2>
+          <div class="model-table-wrap">
+            <table class="model-table">
+              <thead><tr><th>사용자</th><th>호출</th><th>입력 토큰</th><th>출력 토큰</th><th>영상(초)</th><th>이미지</th><th>실패</th><th>마지막 사용</th></tr></thead>
+              <tbody id="usageUserBody"></tbody>
+            </table>
+          </div>
+
+          <h2 class="usage-heading">모델별</h2>
+          <div class="model-table-wrap">
+            <table class="model-table">
+              <thead><tr><th>모델</th><th>용도</th><th>호출</th><th>입력 토큰</th><th>출력 토큰</th><th>영상(초)</th><th>이미지</th><th>실패</th></tr></thead>
+              <tbody id="usageModelBody"></tbody>
+            </table>
+          </div>
+
+          <p class="field-hint" id="usageNote"></p>
+          </div>
+
+          <!-- 영상 비용·토큰 (설계자 2026-10-07): 영상 만들기 화면에서 비용 표시를 걷고 여기서만 본다. -->
+          <div class="usage-section">
+            <div class="page-intro compact">
+              <div><h2 class="usage-heading">영상 비용 · 토큰</h2><p class="field-hint">영상 만들기(Luma · Seedance · 이미지 · 텍스트)가 지금까지 쓴 금액과 API 토큰입니다. 기간과 관계없이 누적입니다.</p></div>
+              <div class="usage-controls">
+                <button class="outline-action" id="refreshVideoCosts"><svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18.6 7M17.9 15A7 7 0 0 1 5.4 17"/></svg> 새로고침</button>
+              </div>
+            </div>
+            <div class="usage-cards" id="videoCostTotals"></div>
+            <div class="model-table-wrap">
+              <table class="model-table">
+                <thead><tr><th>모델</th><th>종류</th><th>호출</th><th>입력 토큰</th><th>출력 토큰</th><th>금액(USD)</th></tr></thead>
+                <tbody id="videoCostModelBody"></tbody>
+              </table>
+            </div>
+            <p class="field-hint" id="videoCostNote"></p>
+          </div>
+
+          <!--
+            프롬프트 두 계층 관리 (지시서 5-1 ~ 6-3).
+
+            백엔드 프롬프트는 **읽기만** 된다. 편집 칸을 아예 만들지 않는다. disabled 로 두면
+            나중에 누가 속성만 떼어 저장 경로를 열 수 있고, 화면상으로도 "바꿀 수 있는데
+            지금은 막혀 있다"로 읽힌다. 실제로는 배포로만 바뀐다.
+
+            백엔드를 감춰 두지 않고 펼쳐 볼 수 있게 한 이유: 무엇이 이미 고정되어 있는지
+            모르면 관리자가 프론트엔드 칸에 같은 내용을 다시 적는다. 그러면 같은 지시가
+            두 번 들어가 서로 상충한다.
+          -->
+          <div class="usage-section">
+            <div class="page-intro compact">
+              <div>
+                <h2 class="usage-heading">프롬프트 관리</h2>
+                <p class="field-hint">
+                  용도마다 <strong>백엔드 프롬프트</strong>(시스템 고정, 배포로만 변경)와
+                  <strong>프론트엔드 프롬프트</strong>(여기서 수정)를 함께 봅니다.
+                  실제 호출은 <code>백엔드 → 프론트엔드 → 사용자 입력</code> 순서로 결합되며
+                  충돌 시 백엔드가 우선합니다.
+                </p>
+              </div>
+              <div class="usage-controls">
+                <button class="outline-action" id="promptMappingButton">매핑표 보기</button>
+                <button class="outline-action" id="refreshPrompts"><svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18.6 7M17.9 15A7 7 0 0 1 5.4 17"/></svg> 새로고침</button>
+              </div>
+            </div>
+
+            <div class="prompt-alert is-hidden" id="promptMissingAlert" role="alert"></div>
+            <div class="prompt-list" id="promptList"></div>
+          </div>
+        </section>
+
+        <!-- ================= 내 사용량 (한도가 걸린 계정) ================= -->
+        <section class="view" id="myUsageView" data-view="myUsage">
+          <div class="page-intro">
+            <div>
+              <h1>내 사용량</h1>
+              <p class="field-hint">
+                남은 생성 횟수와, 지금까지 만든 결과물입니다. 다른 사용자의 사용량은 보이지 않습니다.
+              </p>
+            </div>
+            <button class="outline-action" id="refreshMyUsage"><svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18.6 7M17.9 15A7 7 0 0 1 5.4 17"/></svg> 새로고침</button>
+          </div>
+
+          <div class="usage-cards" id="myQuotaCards"></div>
+
+          <!--
+            두 숫자가 다른 이유를 화면에 적어 둔다. 위는 결과물 건수(한도), 아래는 모델
+            호출 수다. 콘티 한 장이 호출 열 번이 넘으므로 아래 숫자가 항상 더 크다.
+            설명이 없으면 "한도가 잘못 세어진다"는 문의가 나온다.
+          -->
+          <h2 class="usage-heading">만든 결과물</h2>
+          <p class="field-hint">
+            아래 표는 한도에서 차감된 건수입니다. 콘티 한 장이나 영상 한 편은 내부에서 모델을
+            여러 번 부르더라도 1건입니다. 실패한 시도는 차감되지 않습니다.
+          </p>
+          <div class="model-table-wrap">
+            <table class="model-table">
+              <thead><tr><th>구분</th><th>기능</th><th>만든 시각</th></tr></thead>
+              <tbody id="myCreditBody"></tbody>
+            </table>
+          </div>
+
+          <h2 class="usage-heading">모델 호출 (참고)</h2>
+          <p class="field-hint">
+            게이트웨이가 기록한 호출 수입니다. 위의 결과물 건수와 세는 단위가 달라 숫자가 다릅니다.
+          </p>
+          <div class="usage-cards" id="myUsageTotals"></div>
+          <p class="field-hint" id="myUsageNote"></p>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- ================= 모달: 새 프로젝트 ================= -->
+  <div class="modal-scrim is-hidden" id="projectModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="projectModalTitle">
+      <div class="modal-head"><h2 id="projectModalTitle">새 프로젝트</h2><button class="icon-button" id="projectModalClose" aria-label="닫기"><span></span><span></span></button></div>
+      <!-- 지시서 3절: 웹툰/트리트먼트/이미지 선택 구간을 삭제한다.
+           스토리 타입(대본/트리트먼트/로그라인)은 프로젝트 안의 '스토리' 구획에서 고른다 —
+           만들기 시점에는 원문이 아직 없어서 타입을 물어도 답할 수 없다.
+           inputType 은 데이터 모델에 남아 있고 createProject 가 webtoon 으로 채운다. -->
+      <form id="projectForm" novalidate>
+        <label class="field-label">개발 트랙 <small class="field-required">필수</small></label>
+        <div class="input-type-grid project-track-options" id="projectTrackOptions">
+          <button type="button" class="input-type" id="projectTrackStory" data-track="story">
+            <span class="input-type-step">STORY</span>
+            <strong>스토리 개발로 진행</strong>
+            <small>바이블·로그라인·콘티·대본</small>
+            <small class="track-disabled-reason is-hidden">이 환경에서는 스토리 개발 기능이 꺼져 있습니다.</small>
+          </button>
+          <button type="button" class="input-type" id="projectTrackVideo" data-track="video">
+            <span class="input-type-step">VIDEO</span>
+            <strong>영상 개발로 진행</strong>
+            <small>웹툰 컷 → 영상</small>
+            <small class="track-disabled-reason is-hidden">이 환경에서는 영상 개발 기능이 꺼져 있습니다.</small>
+          </button>
+        </div>
+        <p class="field-hint track-immutable-note">개발 트랙은 프로젝트를 만든 뒤 변경할 수 없습니다. 바꾸려면 새 프로젝트를 만들어 주세요.</p>
+        <!-- 기존 inputType 선택은 제거된 상태를 유지한다. 개발 축은 위의 project.track 2택이 담당하고,
+             storyType(대본/트리트먼트/로그라인)은 story 트랙 프로젝트 안에서 기존 흐름대로 고른다. -->
+        <label class="field-label" for="projectTitle">제목</label>
+        <div class="input-wrap"><input id="projectTitle" type="text" maxlength="120" placeholder="프로젝트 제목" required></div>
+        <!-- 라벨을 '스토리'에서 '설명'으로 바꿨다. 영상 전용에서는 줄거리를 적는 칸이 아니라
+             폴더 메모다. 필드 자체와 maxlength 8000 은 유지한다 — AI 표지 생성이 이 값을 쓴다. -->
+        <label class="field-label" for="projectStory">설명 <small class="field-optional">선택</small></label>
+        <textarea id="projectStory" rows="3" maxlength="8000" placeholder="이 폴더가 무엇인지 적어주세요. AI 표지 생성에도 사용됩니다."></textarea>
+        <label class="field-label">공개 범위</label>
+        <div class="segmented visibility" id="visibilityOptions">
+          <button type="button" class="active" data-value="private">개인 (나만 보기)</button>
+          <button type="button" data-value="shared">공유 (모두 보기)</button>
+        </div>
+        <div class="login-error" id="projectError" role="alert"></div>
+        <div class="modal-actions">
+          <button class="text-action" type="button" id="projectCancel">취소</button>
+          <button class="primary-button" id="projectSubmit" type="submit" disabled>만들기</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= 모달: 기존 프로젝트 개발 트랙 선택 ================= -->
+  <div class="modal-scrim is-hidden" id="projectTrackModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="projectTrackModalTitle" aria-describedby="projectTrackSuggestion">
+      <div class="modal-head">
+        <h2 id="projectTrackModalTitle">개발 트랙 선택</h2>
+        <button class="icon-button" id="projectTrackModalClose" type="button" aria-label="닫기"><span></span><span></span></button>
+      </div>
+      <p class="field-hint tight"><strong id="projectTrackProjectTitle">프로젝트</strong>에서 진행할 개발 방식을 선택해 주세요.</p>
+      <p class="track-suggestion" id="projectTrackSuggestion">추천을 확인하는 중입니다.</p>
+      <div class="input-type-grid project-track-options" id="projectTrackChoices">
+        <button type="button" class="input-type" data-track="story">
+          <span class="input-type-step">STORY</span>
+          <strong>스토리 개발로 진행</strong>
+          <small>바이블·로그라인·콘티·대본</small>
+          <small class="track-disabled-reason is-hidden">이 환경에서는 스토리 개발 기능이 꺼져 있습니다.</small>
+        </button>
+        <button type="button" class="input-type" data-track="video">
+          <span class="input-type-step">VIDEO</span>
+          <strong>영상 개발로 진행</strong>
+          <small>웹툰 컷 → 영상</small>
+          <small class="track-disabled-reason is-hidden">이 환경에서는 영상 개발 기능이 꺼져 있습니다.</small>
+        </button>
+      </div>
+      <p class="field-hint track-immutable-note">추천은 자동 배정되지 않습니다. 직접 고른 트랙은 이후 변경할 수 없습니다.</p>
+      <p class="readonly-note is-hidden" id="projectTrackOwnerNote">이 프로젝트의 소유자가 개발 트랙을 정해야 합니다.</p>
+      <div class="login-error" id="projectTrackError" role="alert"></div>
+      <div class="modal-actions">
+        <button class="text-action" type="button" id="projectTrackCancel">취소</button>
+        <button class="primary-button" type="button" id="projectTrackConfirm" disabled>선택하고 계속</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 모달: 사용자 삭제 경고 ================= -->
+  <!-- ================= 모달: 범용 확인 =================
+       window.confirm 을 대신한다. 브라우저 기본 대화상자는 앱과 이질적이고,
+       스타일을 줄 수 없으며, 모바일에서는 페이지 URL이 함께 노출된다.
+       위험한 작업과 비용이 드는 작업 모두 이 모달을 쓴다. -->
+  <div class="modal-scrim is-hidden" id="confirmModal">
+    <div class="modal danger" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmBody">
+      <div class="modal-head">
+        <h2 id="confirmTitle">확인</h2>
+        <button class="icon-button" id="confirmClose" type="button" aria-label="닫기"><span></span><span></span></button>
+      </div>
+      <div class="danger-banner" id="confirmBanner">
+        <span aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 9v5M12 17h.01M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
+        <div>
+          <strong id="confirmLead">이 작업은 되돌릴 수 없습니다.</strong>
+          <p id="confirmBody">계속하기 전에 대상을 다시 확인해 주세요.</p>
+        </div>
+      </div>
+      <p class="delete-target" id="confirmTargetRow">대상: <strong id="confirmTarget">-</strong></p>
+      <div class="modal-actions">
+        <button class="text-action" type="button" id="confirmCancel">취소</button>
+        <button class="danger-button" type="button" id="confirmOk">삭제</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-scrim is-hidden" id="deleteUserModal">
+    <div class="modal danger" role="dialog" aria-modal="true" aria-labelledby="deleteUserTitle">
+      <div class="modal-head"><h2 id="deleteUserTitle">사용자 삭제</h2><button class="icon-button" id="deleteUserClose" aria-label="닫기"><span></span><span></span></button></div>
+      <div class="danger-banner">
+        <span><svg viewBox="0 0 24 24"><path d="M12 9v5M12 17h.01M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
+        <div>
+          <strong>이 작업은 되돌릴 수 없습니다.</strong>
+          <p>삭제된 계정과 선택한 데이터는 복구할 수 없습니다. 진행 전에 대상을 다시 확인해 주세요.</p>
+        </div>
+      </div>
+      <p class="delete-target">대상 사용자: <strong id="deleteUserName">-</strong> <span id="deleteUserProjects"></span></p>
+      <label class="field-label">삭제 범위</label>
+      <div class="delete-options" id="deleteOptions">
+        <label class="radio-row">
+          <input type="radio" name="deleteScope" value="user" checked>
+          <span><strong>사용자만 삭제</strong><small>계정만 삭제하고 프로젝트는 남깁니다. 남은 프로젝트는 소유자 없이 보관됩니다.</small></span>
+        </label>
+        <label class="radio-row">
+          <input type="radio" name="deleteScope" value="all">
+          <span><strong>사용자와 프로젝트 모두 삭제</strong><small>이 사용자가 만든 모든 프로젝트와 표지 이미지까지 함께 삭제합니다.</small></span>
+        </label>
+      </div>
+      <label class="confirm-row">
+        <input type="checkbox" id="deleteConfirmCheck">
+        <span>위 내용을 확인했고, 복구할 수 없음을 이해합니다.</span>
+      </label>
+      <div class="login-error" id="deleteUserError" role="alert"></div>
+      <div class="modal-actions">
+        <button class="text-action" type="button" id="deleteUserCancel">취소</button>
+        <button class="danger-button" id="deleteUserConfirm" type="button" disabled>영구 삭제</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 모달: 비밀번호 변경 =================
+       admin 과 일반 사용자가 같은 화면을 쓴다. 대상은 항상 로그인한 본인이고
+       아이디를 입력받지 않는다 — 서버도 토큰의 주인만 바꾼다. -->
+  <div class="modal-scrim is-hidden" id="passwordModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="passwordModalTitle" aria-describedby="passwordModalLead">
+      <div class="modal-head">
+        <h2 id="passwordModalTitle">비밀번호 변경</h2>
+        <button class="icon-button" id="passwordModalClose" type="button" aria-label="닫기"><span></span><span></span></button>
+      </div>
+      <p class="field-hint tight" id="passwordModalLead">
+        <strong id="passwordModalUser">-</strong> 계정의 비밀번호를 바꿉니다. 본인 확인을 위해 현재 비밀번호를 함께 입력해 주세요.
+      </p>
+      <form id="passwordForm" novalidate>
+        <label class="field-label" for="currentPassword">현재 비밀번호</label>
+        <div class="input-wrap">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3M5 10h14v11H5V10Z"/></svg>
+          <input id="currentPassword" name="currentPassword" type="password" autocomplete="current-password" placeholder="현재 비밀번호" required>
+        </div>
+
+        <label class="field-label" for="newPassword">새 비밀번호</label>
+        <div class="input-wrap">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3M5 10h14v11H5V10Z"/><path d="M12 14v3"/></svg>
+          <input id="newPassword" name="newPassword" type="password" autocomplete="new-password" placeholder="4자 이상" minlength="4" required>
+        </div>
+
+        <label class="field-label" for="newPasswordConfirm">새 비밀번호 확인</label>
+        <div class="input-wrap">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3M5 10h14v11H5V10Z"/><path d="m9 15 2 2 4-4"/></svg>
+          <input id="newPasswordConfirm" name="newPasswordConfirm" type="password" autocomplete="new-password" placeholder="새 비밀번호를 다시 입력" required>
+        </div>
+
+        <p class="field-hint">
+          변경해도 지금 이 세션은 유지됩니다. 다른 기기에 남아 있는 로그인은 만료 시각까지
+          그대로이므로, 필요하면 그 기기에서 직접 로그아웃해 주세요.
+        </p>
+        <div class="login-error" id="passwordError" role="alert"></div>
+        <div class="login-success" id="passwordSuccess" role="status"></div>
+        <div class="modal-actions">
+          <button class="text-action" type="button" id="passwordCancel">취소</button>
+          <button class="primary-button" id="passwordSubmit" type="submit">비밀번호 변경</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!--
+    생성 한도 조정. 세는 단위는 결과물 건수이고, 모델 호출 수와 다르다는 것을 화면에
+    적어 둔다. 사용량 화면(호출 수)과 숫자가 다르게 보여 문의가 생기기 때문이다.
+  -->
+  <div class="modal-scrim is-hidden" id="quotaModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="quotaTitle">
+      <div class="modal-head"><h2 id="quotaTitle">생성 한도</h2><button class="icon-button" id="quotaClose" aria-label="닫기"><span></span><span></span></button></div>
+      <p class="delete-target">대상 사용자: <strong id="quotaUserName">-</strong></p>
+      <p class="field-hint">
+        사용자가 <strong>결과를 받은 건수</strong>를 셉니다. 콘티 한 장은 내부에서 모델을
+        여러 번 부르지만 1건입니다. 실패한 시도는 세지 않습니다.
+        칸을 비우면 그 항목은 무제한이 됩니다. 0을 넣으면 아예 만들 수 없습니다.
+      </p>
+      <div class="quota-grid">
+        <label class="field">
+          <span class="field-label">영상 (건)</span>
+          <input type="number" id="quota_video" min="0" step="1" placeholder="무제한">
+          <small class="field-hint">영상 만들기 · 롱테이크 · NEW_영상 제작</small>
+        </label>
+        <label class="field">
+          <span class="field-label">이미지·문서 (건)</span>
+          <input type="number" id="quota_asset" min="0" step="1" placeholder="무제한">
+          <small class="field-hint">이미지 · 콘티 · 트리트먼트 · 표지 · 화풍 변환</small>
+        </label>
+      </div>
+      <div class="quota-used" id="quotaUsed"></div>
+      <label class="confirm-row">
+        <input type="checkbox" id="quotaReset">
+        <span>사용 기록을 0으로 초기화합니다. <small>한도만 올리면 이미 쓴 건수는 남습니다. 처음부터 다시 쓰게 하려면 함께 체크하세요.</small></span>
+      </label>
+      <div class="login-error" id="quotaError" role="alert"></div>
+      <div class="modal-actions">
+        <button class="text-action" type="button" id="quotaCancel">취소</button>
+        <button class="primary-button" id="quotaSave" type="button">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 지시서 8-2 가 요구하는 매핑표. 백엔드 프롬프트가 누락된 모델이 하나도 없음을 보여준다. -->
+  <div class="modal-scrim is-hidden" id="promptMappingModal">
+    <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="promptMappingTitle">
+      <div class="modal-head"><h2 id="promptMappingTitle">백엔드 프롬프트 매핑표</h2><button class="icon-button" id="promptMappingClose" aria-label="닫기"><span></span><span></span></button></div>
+      <p class="field-hint" id="promptMappingSummary"></p>
+      <div class="model-table-wrap">
+        <table class="model-table">
+          <thead><tr><th>모델</th><th>용도</th><th>백엔드 프롬프트</th><th>프론트엔드 기본값</th><th>수정 가능</th></tr></thead>
+          <tbody id="promptMappingBody"></tbody>
+        </table>
+      </div>
+      <div class="modal-actions">
+        <button class="text-action" type="button" id="promptMappingCopy">표 복사</button>
+        <button class="primary-button" type="button" id="promptMappingOk">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 수정 이력. S3 객체 버전이 곧 이력이다(별도 이력 테이블을 두지 않는다). -->
+  <div class="modal-scrim is-hidden" id="promptHistoryModal">
+    <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="promptHistoryTitle">
+      <div class="modal-head"><h2 id="promptHistoryTitle">프롬프트 수정 이력</h2><button class="icon-button" id="promptHistoryClose" aria-label="닫기"><span></span><span></span></button></div>
+      <p class="delete-target">용도: <strong id="promptHistoryRole">-</strong></p>
+      <div class="prompt-history" id="promptHistoryBody"></div>
+      <div class="modal-actions">
+        <button class="primary-button" type="button" id="promptHistoryOk">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 대본 만들기 (지시서 3절) ============
+       시작화~끝화, 회차 분량, 형식, 품질을 고르고 **예상 비용을 확인한 뒤** 시작한다.
+       아웃라인을 먼저 만들고 승인해야 회차 생성이 시작된다. -->
+  <div class="modal-scrim is-hidden" id="scriptModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="scriptModalTitle">
+      <div class="modal-head">
+        <h2 id="scriptModalTitle">대본 만들기</h2>
+        <button class="icon-button" id="scriptModalClose" aria-label="닫기"><span></span><span></span></button>
+      </div>
+
+      <div class="quota-grid">
+        <div>
+          <label class="field-label" for="scriptFrom">시작 화</label>
+          <div class="input-wrap"><input id="scriptFrom" type="number" min="1" max="999" step="1" value="1"></div>
+        </div>
+        <div>
+          <label class="field-label" for="scriptTo">끝 화</label>
+          <div class="input-wrap"><input id="scriptTo" type="number" min="1" max="999" step="1" value="3"></div>
+        </div>
+      </div>
+      <p class="field-hint tight" id="scriptRangeHint">한 번에 최대 12화까지 만들 수 있습니다.</p>
+
+      <label class="field-label">회차 분량</label>
+      <div class="segmented" id="scriptLengthOptions">
+        <button type="button" data-value="short">짧게</button>
+        <button class="active" type="button" data-value="normal">보통</button>
+        <button type="button" data-value="long">길게</button>
+      </div>
+
+      <label class="field-label">형식</label>
+      <div class="segmented" id="scriptFormatOptions">
+        <button class="active" type="button" data-value="drama">드라마 대본</button>
+      </div>
+
+      <label class="field-label">품질</label>
+      <div class="segmented" id="scriptQualityOptions">
+        <button class="active" type="button" data-value="standard">기본</button>
+        <button type="button" data-value="high">고품질</button>
+      </div>
+      <p class="field-hint tight" id="scriptQualityHint"></p>
+
+      <!-- 예상 비용. 지시서 9절 수용 기준이다. -->
+      <div class="tip-card" id="scriptEstimateCard">
+        <span><svg viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></span>
+        <div>
+          <strong>예상 사용량</strong>
+          <p id="scriptEstimate">회차 범위를 정하면 예상값을 보여줍니다.</p>
+        </div>
+      </div>
+
+      <p class="field-hint tight">
+        <b>아웃라인을 먼저 만듭니다.</b> 회차 구성을 확인하고 승인하면 회차별 대본 생성이 시작됩니다.
+        승인 전에는 회차 생성이 시작되지 않습니다.
+      </p>
+
+      <div class="modal-actions">
+        <button class="text-action" type="button" id="scriptCancel">취소</button>
+        <button class="primary-button" type="button" id="scriptSubmit">아웃라인 만들기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 아웃라인 승인 ============ -->
+  <div class="modal-scrim is-hidden" id="outlineModal">
+    <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="outlineTitle">
+      <div class="modal-head">
+        <h2 id="outlineTitle">아웃라인 확인</h2>
+        <button class="icon-button" id="outlineClose" aria-label="닫기"><span></span><span></span></button>
+      </div>
+      <p class="delete-target" id="outlineArc">-</p>
+      <div class="outline-list" id="outlineBody"></div>
+      <div class="modal-actions">
+        <button class="text-action" type="button" id="outlineReject">닫기</button>
+        <button class="primary-button" type="button" id="outlineApprove">승인하고 회차 생성</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 결과물 읽기(대본 뷰어) ============
+       전에는 범용 확인 모달(confirmDialog)로 결과물을 보여 주었다. 그 모달은
+       danger-banner 안에 본문을 넣으므로 대본이 붉은 경고문처럼 보였고,
+       본문을 <p> 하나의 textContent 로 넣어 씬 구분과 줄바꿈이 모두 사라졌다.
+       읽기 전용 뷰어를 따로 둔다 — 여기서는 줄바꿈을 그대로 살리고(pre-wrap),
+       씬 제목 · 지문 · 대사를 대본 형식으로 구분하며, txt 로 내려받을 수 있다. -->
+  <div class="modal-scrim is-hidden" id="readerModal">
+    <div class="modal reader" role="dialog" aria-modal="true" aria-labelledby="readerTitle">
+      <div class="modal-head">
+        <div class="reader-title">
+          <h2 id="readerTitle">대본</h2>
+          <p class="reader-meta" id="readerMeta"></p>
+        </div>
+        <button class="icon-button" id="readerClose" type="button" aria-label="닫기"><span></span><span></span></button>
+      </div>
+
+      <div class="reader-toolbar">
+        <!-- 지시서 0절: 모든 생성물에 AI 생성 표기. 경고가 아니라 표기이므로
+             danger 색을 쓰지 않고 기존 .ai-badge 를 그대로 쓴다. -->
+        <span class="ai-badge">AI 생성</span>
+        <span class="reader-count" id="readerCount"></span>
+        <div class="reader-toolbar-actions">
+          <button class="text-action" type="button" id="readerCopy">전체 복사</button>
+          <button class="outline-action" type="button" id="readerDownload">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M4.5 19.5h15"/></svg>
+            txt 다운로드
+          </button>
+          <!-- PDF는 서버가 만들어 파일로 내려준다. 여기 있던 인쇄 버튼을 대체한 것이다 —
+               인쇄 대화상자는 사용자가 "PDF로 저장"을 직접 골라야 하고, 문서에 접속 URL과
+               시각이 찍히고, 여백 설정이 사람마다 달라 같은 콘티가 다르게 나왔다.
+               자세한 배경은 app/src/pdf_export.py 주석 참고.
+               서버가 PDF를 만들 수 있는 결과물에서만 보인다(openReader 가 판단한다). -->
+          <button class="outline-action is-hidden" type="button" id="readerPdf">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M4.5 19.5h15"/></svg>
+            PDF 다운로드
+          </button>
+        </div>
+      </div>
+
+      <!-- 본문. tabindex 를 준 이유: 스크롤되는 영역이므로 키보드만 쓰는 사용자도
+           포커스를 넣어 위아래 키로 읽을 수 있어야 한다. -->
+      <div class="reader-page" id="readerBody" tabindex="0" role="document" aria-labelledby="readerTitle"></div>
+
+      <div class="modal-actions">
+        <button class="text-action" type="button" id="readerDismiss">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 캐릭터 상세 (scene_video, Seedance 2.0 v2) ============
+       탭 8종(기본·외형·체형·성격·특징·취향·관계·3D 모델). scene.js 의
+       openCharacterDetail()이 연다. 이 모달과 scene.js 의 해당 함수들만 지우면
+       탭 편집 기능이 떨어진다 - 캐릭터 CRUD 자체(이름·역할·외형 텍스트)는
+       #sceneCharacterForm(위쪽 섹션)에 남아 계속 동작한다. -->
+  <div class="modal-scrim is-hidden" id="characterDetailModal">
+    <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="characterDetailTitle">
+      <div class="modal-head">
+        <h2 id="characterDetailTitle">캐릭터</h2>
+        <button class="icon-button" id="characterDetailClose" aria-label="닫기"><span></span><span></span></button>
+      </div>
+
+      <div class="segmented" id="characterTabSwitch"></div>
+
+      <div id="characterTabPanels">
+        <!-- 기본 -->
+        <div class="character-tab-panel" data-tab="basic">
+          <label class="field-label" for="tabBasicName">이름</label>
+          <input class="panel-input" id="tabBasicName" type="text" maxlength="80">
+          <label class="field-label" for="tabBasicAge">나이</label>
+          <input class="panel-input" id="tabBasicAge" type="text" maxlength="20" placeholder="예: 28세, 20대 후반">
+          <label class="field-label" for="tabBasicOccupation">직업 · 신분</label>
+          <input class="panel-input" id="tabBasicOccupation" type="text" maxlength="60">
+          <label class="field-label" for="tabBasicRoleType">역할</label>
+          <input class="panel-input" id="tabBasicRoleType" type="text" maxlength="40" placeholder="예: 남주1, 조연">
+          <label class="field-label" for="tabBasicTagline">한 줄 소개</label>
+          <input class="panel-input" id="tabBasicTagline" type="text" maxlength="200">
+        </div>
+
+        <!-- 외형 -->
+        <div class="character-tab-panel is-hidden" data-tab="appearance">
+          <label class="field-label" for="tabAppearanceHair">머리 (색 · 길이 · 스타일)</label>
+          <input class="panel-input" id="tabAppearanceHair" type="text" maxlength="300">
+          <label class="field-label" for="tabAppearanceEyes">눈</label>
+          <input class="panel-input" id="tabAppearanceEyes" type="text" maxlength="300">
+          <label class="field-label" for="tabAppearanceSkin">피부</label>
+          <input class="panel-input" id="tabAppearanceSkin" type="text" maxlength="300">
+          <label class="field-label" for="tabAppearanceFaceImpression">얼굴 인상</label>
+          <input class="panel-input" id="tabAppearanceFaceImpression" type="text" maxlength="300">
+          <label class="field-label" for="tabAppearanceDefaultOutfit">기본 의상</label>
+          <textarea class="panel-textarea" id="tabAppearanceDefaultOutfit" rows="2" maxlength="2000"></textarea>
+          <label class="field-label" for="tabAppearanceAccessories">액세서리</label>
+          <input class="panel-input" id="tabAppearanceAccessories" type="text" maxlength="300">
+          <label class="field-label" for="tabAppearanceVisualFeatures">시각 특징 (흉터 · 안경 · 문신)</label>
+          <textarea class="panel-textarea" id="tabAppearanceVisualFeatures" rows="2" maxlength="2000"></textarea>
+        </div>
+
+        <!-- 체형 -->
+        <div class="character-tab-panel is-hidden" data-tab="body">
+          <p class="field-hint">키·체격·어깨·골격·등신 다섯 항목이 3D 모델 생성에 필요한 최소 정보입니다.</p>
+          <div class="options-row">
+            <fieldset><legend>키(cm)</legend><input class="panel-input" id="tabBodyHeightCm" type="number" min="100" max="230"></fieldset>
+            <fieldset><legend>체격</legend><select class="panel-select" id="tabBodyBuild">
+              <option value="">선택 안 함</option>
+              <option value="마름">마름</option><option value="보통">보통</option><option value="탄탄">탄탄</option>
+              <option value="건장">건장</option><option value="근육질">근육질</option><option value="통통">통통</option>
+            </select></fieldset>
+            <fieldset><legend>어깨</legend><select class="panel-select" id="tabBodyShoulders">
+              <option value="">선택 안 함</option><option value="좁음">좁음</option><option value="보통">보통</option><option value="넓음">넓음</option>
+            </select></fieldset>
+            <fieldset><legend>골격</legend><select class="panel-select" id="tabBodyFrame">
+              <option value="">선택 안 함</option><option value="가늚">가늚</option><option value="보통">보통</option><option value="굵음">굵음</option>
+            </select></fieldset>
+          </div>
+          <div class="options-row">
+            <fieldset><legend>등신</legend><select class="panel-select" id="tabBodyHeadToBodyRatio">
+              <option value="">선택 안 함</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option>
+            </select></fieldset>
+            <fieldset><legend>다리 비율</legend><select class="panel-select" id="tabBodyLegRatio">
+              <option value="">선택 안 함</option><option value="짧음">짧음</option><option value="보통">보통</option><option value="긺">긺</option>
+            </select></fieldset>
+            <fieldset><legend>얼굴형</legend><select class="panel-select" id="tabBodyFaceShape">
+              <option value="">선택 안 함</option><option value="계란">계란</option><option value="갸름">갸름</option>
+              <option value="각진">각진</option><option value="둥근">둥근</option><option value="역삼각">역삼각</option>
+            </select></fieldset>
+            <fieldset><legend>자세 · 걸음</legend><select class="panel-select" id="tabBodyPosture">
+              <option value="">선택 안 함</option><option value="꼿꼿">꼿꼿</option><option value="구부정">구부정</option>
+              <option value="여유">여유</option><option value="빠름">빠름</option>
+            </select></fieldset>
+          </div>
+          <label class="field-label" for="tabBodyFreeText">자유 서술</label>
+          <textarea class="panel-textarea" id="tabBodyFreeText" rows="2" maxlength="2000"></textarea>
+          <p class="field-hint tight" id="tabBodyReadinessHint"></p>
+        </div>
+
+        <!-- 성격 -->
+        <div class="character-tab-panel is-hidden" data-tab="personality">
+          <label class="field-label" for="tabPersonalityTemperament">기질 (예: 무뚝뚝, 다정, 츤데레)</label>
+          <input class="panel-input" id="tabPersonalityTemperament" type="text" maxlength="300">
+          <label class="field-label" for="tabPersonalityEmotionExpression">감정 표현 방식</label>
+          <input class="panel-input" id="tabPersonalityEmotionExpression" type="text" maxlength="300">
+          <label class="field-label" for="tabPersonalitySpeechStyle">말투</label>
+          <input class="panel-input" id="tabPersonalitySpeechStyle" type="text" maxlength="300">
+        </div>
+
+        <!-- 특징 -->
+        <div class="character-tab-panel is-hidden" data-tab="traits">
+          <label class="field-label" for="tabTraitsHabits">버릇 · 습관</label>
+          <textarea class="panel-textarea" id="tabTraitsHabits" rows="2" maxlength="2000"></textarea>
+          <label class="field-label" for="tabTraitsBelongings">소지품</label>
+          <input class="panel-input" id="tabTraitsBelongings" type="text" maxlength="300">
+          <label class="field-label" for="tabTraitsSkills">특기</label>
+          <input class="panel-input" id="tabTraitsSkills" type="text" maxlength="300">
+          <label class="field-label" for="tabTraitsWeaknesses">약점</label>
+          <input class="panel-input" id="tabTraitsWeaknesses" type="text" maxlength="300">
+        </div>
+
+        <!-- 취향 -->
+        <div class="character-tab-panel is-hidden" data-tab="preferences">
+          <label class="field-label" for="tabPreferencesLikes">좋아하는 것</label>
+          <input class="panel-input" id="tabPreferencesLikes" type="text" maxlength="300">
+          <label class="field-label" for="tabPreferencesDislikes">싫어하는 것</label>
+          <input class="panel-input" id="tabPreferencesDislikes" type="text" maxlength="300">
+          <label class="field-label" for="tabPreferencesInterests">관심사</label>
+          <input class="panel-input" id="tabPreferencesInterests" type="text" maxlength="300">
+        </div>
+
+        <!-- 관계 -->
+        <div class="character-tab-panel is-hidden" data-tab="relationship">
+          <label class="field-label" for="tabRelationshipPartnerCharacterId">상대 캐릭터</label>
+          <select class="panel-select" id="tabRelationshipPartnerCharacterId"></select>
+          <div class="options-row">
+            <fieldset><legend>포지션</legend><select class="panel-select" id="tabRelationshipPosition">
+              <option value="">선택 안 함</option>
+              <option value="top">공(攻)</option>
+              <option value="bottom">수(受)</option>
+              <option value="reversible">리버서블</option>
+              <option value="unspecified">미지정</option>
+            </select></fieldset>
+            <fieldset><legend>관계 단계</legend><select class="panel-select" id="tabRelationshipStage">
+              <option value="">선택 안 함</option>
+              <option value="somsom">썸</option>
+              <option value="early_dating">연애 초기</option>
+              <option value="dating">연애</option>
+              <option value="conflict">갈등</option>
+            </select></fieldset>
+          </div>
+          <label class="field-label" for="tabRelationshipHonorific">호칭</label>
+          <input class="panel-input" id="tabRelationshipHonorific" type="text" maxlength="40">
+          <label class="field-label" for="tabRelationshipDynamicsNote">역학 메모</label>
+          <textarea class="panel-textarea" id="tabRelationshipDynamicsNote" rows="2" maxlength="2000"></textarea>
+
+          <div class="divider"></div>
+          <label class="field-label">BL 장르 · 공수 태그 (선택, 성격 · 체형 빈 칸에 기본값을 제안합니다)</label>
+          <p class="field-hint tight">태그를 고르면 아래 성격 · 체형 탭에 이미 값이 있는 항목은 바꾸지 않습니다.</p>
+          <div class="style-chips" id="characterTagChips"></div>
+          <div class="tip-card is-hidden" id="characterTagSuggestion">
+            <span><svg viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></span>
+            <div>
+              <strong>제안된 기본값</strong>
+              <p id="characterTagSuggestionText"></p>
+              <button class="text-action" type="button" id="characterTagApply">성격 · 체형 빈 칸에 적용</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3D 모델 -->
+        <div class="character-tab-panel is-hidden" data-tab="model">
+          <div class="panel-title">
+            <div><h3>3D 모델</h3><p class="field-hint">모델이 준비돼야 이 캐릭터로 영상을 만들 수 있습니다(모델링이 먼저입니다).</p></div>
+            <span class="status-badge idle" id="characterModelStatusBadge"><i></i> 확인 중</span>
+          </div>
+          <div class="login-error is-hidden" id="characterModelNeedsData" role="alert"></div>
+
+          <label class="field-label">경로 A · 파일 업로드 (GLB 또는 VRM, 50MB 이하)</label>
+          <div class="ref-actions">
+            <button class="outline-action" type="button" id="characterModelUploadButton">
+              <svg viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M4.5 19.5h15"/></svg>
+              GLB · VRM 업로드
+            </button>
+            <input id="characterModelFile" type="file" accept=".glb,.vrm" hidden>
+          </div>
+
+          <div class="divider"></div>
+
+          <label class="field-label">경로 B · 자료로 생성 (text→3D)</label>
+          <p class="field-hint tight">체형 탭 필수 5항목과 외형 탭이 있어야 생성을 제안합니다.</p>
+          <button class="outline-action" type="button" id="characterModelGenerateButton">3D 생성 제안 받기</button>
+
+          <div class="divider"></div>
+
+          <label class="field-label">렌더 미리보기</label>
+          <div class="ref-gallery" id="characterModelRenders"></div>
+          <p class="field-hint tight is-hidden" id="characterModelMeasurementNotes"></p>
+
+          <div class="divider"></div>
+
+          <label class="field-label">스타일 카드 (렌더 완료 후 생성)</label>
+          <div class="ref-actions">
+            <button class="outline-action" type="button" id="characterCardsGenerateButton">anime · live_action 카드 만들기</button>
+          </div>
+          <div class="ref-gallery" id="characterCastCards"></div>
+        </div>
+      </div>
+
+      <div class="login-error" id="characterDetailError" role="alert"></div>
+      <div class="modal-actions">
+        <button class="text-action" type="button" id="characterDetailClose2">닫기</button>
+        <button class="primary-button" type="button" id="characterDetailSave">탭 저장</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"><span id="toastIcon"></span><div><strong id="toastTitle"></strong><p id="toastMessage"></p></div><button id="toastClose" aria-label="알림 닫기">×</button></div>
+</body>
+</html>

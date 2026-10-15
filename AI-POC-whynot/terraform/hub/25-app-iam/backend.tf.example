@@ -1,0 +1,15 @@
+/*
+  bootstrap apply 로 state 버킷이 생긴 뒤에 활성화한다.
+
+    Copy-Item backend.tf.example backend.tf
+    Copy-Item backend.hcl.example backend.hcl
+    terraform init -backend-config=backend.hcl -migrate-state
+*/
+terraform {
+  backend "s3" {
+    # 값은 backend.hcl 로 넘긴다. 여기에 계정·버킷 이름을 박지 않는다.
+    # Terraform 1.10+ 의 native lock 을 쓴다 (DynamoDB 테이블 불필요).
+    use_lockfile = true
+    encrypt      = true
+  }
+}

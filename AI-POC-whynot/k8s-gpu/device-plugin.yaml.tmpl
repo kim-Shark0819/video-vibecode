@@ -1,0 +1,76 @@
+# NVIDIA device plugin.
+#
+# ## 왜 필요한가
+#
+# AMI `AL2023_x86_64_NVIDIA` 는 드라이버와 nvidia-container-toolkit 을 포함하지만
+# **device plugin 은 없다.** 이것이 없으면 노드가 `nvidia.com/gpu` 를 광고하지 않고,
+# GPU 를 요청한 파드가 영구 Pending 이 된다. 노드는 Ready 인데 파드가 안 뜨는
+# 헷갈리는 상태가 된다.
+#
+# ## 버전
+#
+# 공식 README 확인: Kubernetes >= 1.10 이면 v0.0.0 보다 높은 어떤 버전이든 쓸 수 있고
+# device plugin API 가 v1beta1 로 안정적이다. 즉 EKS 1.36 과 버전을 맞출 필요가 없다.
+# 라이선스 Apache 2.0. NGC 카탈로그 최신 확인값이 v0.19.3 이다.
+#
+# ## nodeSelector 를 두는 이유
+#
+# 없으면 CPU 노드에도 DaemonSet 파드가 뜨고 GPU 를 못 찾아 CrashLoop 한다.
+# `FAIL_ON_INIT_ERROR=false` 로도 막을 수 있지만, 애초에 안 뜨게 하는 편이 낫다.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-device-plugin-daemonset
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: nvidia-device-plugin
+    app.kubernetes.io/part-of: ${PROJECT_NAME}
+spec:
+  selector:
+    matchLabels:
+      name: nvidia-device-plugin-ds
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        name: nvidia-device-plugin-ds
+    spec:
+      # GPU 노드가 죽으면 이 파드가 먼저 밀려나선 안 된다. 밀려나면 남은 GPU 파드가
+      # 스케줄되지 못한다.
+      priorityClassName: system-node-critical
+      nodeSelector:
+        ${GPU_NODE_LABEL_KEY}: ${GPU_NODE_LABEL_VALUE}
+      tolerations:
+        # 노드그룹이 붙이는 taint. terraform 모듈과 같은 key 여야 한다.
+        - key: nvidia.com/gpu
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+        # 다른 도구가 붙이는 관례적 taint 도 함께 받아 둔다.
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: gpu
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      containers:
+        - name: nvidia-device-plugin-ctr
+          image: nvcr.io/nvidia/k8s-device-plugin:v0.19.3
+          env:
+            # GPU 를 못 찾아도 죽지 않는다. 노드 부팅 직후 드라이버 초기화 전에
+            # 파드가 먼저 뜨는 경우가 있다.
+            - name: FAIL_ON_INIT_ERROR
+              value: "false"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: device-plugin
+              mountPath: /var/lib/kubelet/device-plugins
+      volumes:
+        - name: device-plugin
+          hostPath:
+            path: /var/lib/kubelet/device-plugins

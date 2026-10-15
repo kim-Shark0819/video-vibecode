@@ -1,0 +1,36 @@
+#!/bin/bash
+# 렌더링된 산출물입니다. 값을 바꾸려면 deploy/config.env를 수정하고 render.py를 다시 실행하세요.
+set -euo pipefail
+export HOME=/root KUBECONFIG=/root/.kube/config AWS_DEFAULT_REGION=${AWS_REGION}
+aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER_NAME} --kubeconfig "$KUBECONFIG" >/dev/null
+
+NS=${K8S_NAMESPACE}
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ingress.yaml도 같은 config.env에서 렌더링된 파일을 사용한다.
+kubectl apply -f "$SCRIPT_DIR/../k8s/ingress.yaml"
+
+echo '--- waiting for ALB hostname ---'
+ALB_DNS=""
+for i in $(seq 1 60); do
+  ALB_DNS=$(kubectl get ingress toon-change-ai-pj -n "$NS" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+  if [ -n "$ALB_DNS" ]; then
+    echo "ALB hostname: $ALB_DNS"
+    break
+  fi
+  sleep 5
+done
+
+if [ -z "$ALB_DNS" ]; then
+  echo 'ERROR: ALB hostname not assigned'
+  kubectl describe ingress toon-change-ai-pj -n "$NS" | tail -30
+  exit 1
+fi
+
+echo '--- ingress ---'
+kubectl get ingress -n "$NS" -o wide
+
+echo '--- controller events ---'
+kubectl describe ingress toon-change-ai-pj -n "$NS" | sed -n '/Events:/,$p'
+
+echo "ALB_DNS=$ALB_DNS"

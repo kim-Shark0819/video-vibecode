@@ -1,0 +1,19 @@
+#!/bin/bash
+# 렌더링된 산출물입니다. 값을 바꾸려면 deploy/config.env를 수정하고 render.py를 다시 실행하세요.
+# 렌더링된 매니페스트가 클러스터 실제 상태와 일치하는지(drift) 확인합니다.
+set -uo pipefail
+export HOME=/root KUBECONFIG=/root/.kube/config AWS_DEFAULT_REGION=${AWS_REGION}
+aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER_NAME} --kubeconfig "$KUBECONFIG" >/dev/null
+
+cd "$(dirname "$0")/.."
+
+echo '=== SERVER-SIDE DIFF (empty means local matches cluster) ==='
+for f in namespace.yaml service-account.yaml model-catalog.yaml workloads.yaml ingress.yaml; do
+  echo "--- $f ---"
+  kubectl diff -f "k8s/$f" && echo "no drift"
+done
+
+echo '=== DRY-RUN VALIDATION ==='
+kubectl apply --dry-run=server -f k8s/
+
+echo 'MANIFEST VERIFICATION COMPLETE'

@@ -1,0 +1,8 @@
+# Copy-Item backend.hcl.example backend.hcl
+# terraform init -backend-config=backend.hcl
+#
+# 버킷은 AI-POC/terraform/bootstrap 이 만든다 (output bucket_name).
+bucket  = "ai-poc-tfstate-730335451955-ap-northeast-2"
+key     = "hub/25-app-iam.tfstate"
+region  = "ap-northeast-2"
+profile = "ai-poc-hub"

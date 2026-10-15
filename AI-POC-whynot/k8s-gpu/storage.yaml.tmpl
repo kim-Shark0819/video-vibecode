@@ -1,0 +1,58 @@
+# 모델 가중치 저장소.
+#
+# ## 왜 EBS PVC 인가
+#
+# Wan 2.2 I2V-A14B 가중치는 약 68GB 다. 둘 곳이 셋이었다.
+#
+#   인스턴스 스토어 250GB : g6e.xlarge 에 실제로 있다. 가장 빠르지만 노드가 교체되면
+#                          소멸한다. scale-to-zero 를 켜면 노드가 내려갈 때마다 68GB 를
+#                          다시 내려받는다 — 그 기능과 정면으로 충돌한다
+#   S3 + initContainer   : 매 기동마다 수십 GB 전송
+#   EBS gp3 PVC          : 살아남는다. aws-ebs-csi-driver 애드온이 선행
+#
+# EBS 를 골랐다. 애드온은 terraform/hub/40-video-gpu 가 만든다.
+#
+# ## reclaimPolicy: Retain 인 이유
+#
+# PVC 를 실수로 지워도 볼륨이 남는다. 68GB 를 다시 내려받는 데 20~40분이 걸리고
+# 그 시간 동안 GPU 노드가 켜져 있으면 비용이 그대로 나간다.
+#
+# ## WaitForFirstConsumer 인 이유
+#
+# EBS 볼륨은 AZ 에 묶인다. 즉시 바인딩하면 GPU 노드가 없는 AZ 에 볼륨이 생겨
+# 파드가 영구 Pending 이 된다. g6e 는 ap-northeast-2a / 2b 에만 있다.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ${PROJECT_NAME}-gp3
+  labels:
+    app.kubernetes.io/part-of: ${PROJECT_NAME}
+provisioner: ebs.csi.aws.com
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+parameters:
+  type: gp3
+  encrypted: "true"
+  # 가중치 로드는 순차 대용량 읽기다. IOPS 보다 처리량이 중요하다.
+  # gp3 기본값은 3000 IOPS / 125 MB/s 이고, 125 MB/s 로 68GB 를 읽으면 9분이다.
+  iops: "6000"
+  throughput: "500"
+  csi.storage.k8s.io/fstype: ext4
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ${PROJECT_NAME}-wan-weights
+  namespace: ${K8S_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: video-worker
+    app.kubernetes.io/part-of: ${PROJECT_NAME}
+spec:
+  accessModes:
+    # ReadWriteOnce. 단일 GPU 워커가 쓰므로 충분하다. RWX 가 필요해지면 EFS 로 바꾼다.
+    - ReadWriteOnce
+  storageClassName: ${PROJECT_NAME}-gp3
+  resources:
+    requests:
+      storage: ${MODEL_PVC_SIZE}

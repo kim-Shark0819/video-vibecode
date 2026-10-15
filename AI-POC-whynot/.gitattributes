@@ -1,0 +1,35 @@
+# 기본: 텍스트 판별은 git 에 맡기고 저장소 안에서는 LF 로 정규화한다.
+* text=auto
+
+# 배스천(Linux)에서 bash 로 실행되는 파일은 반드시 LF 여야 한다.
+# CRLF 로 체크아웃되면 `$'\r': command not found` 로 죽는다.
+*.sh        text eol=lf
+*.sh.tmpl   text eol=lf
+
+# 렌더링 대상 매니페스트도 Linux 에서 kubectl 이 읽는다.
+*.yaml      text eol=lf
+*.yaml.tmpl text eol=lf
+*.yml       text eol=lf
+
+# config.env 계열은 배스천과 로컬이 함께 읽는다. LF 로 고정한다.
+*.env         text eol=lf
+*.env.example text eol=lf
+
+# Windows 에서만 쓰는 스크립트는 CRLF 를 유지한다.
+*.ps1 text eol=crlf
+
+# 바이너리
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.pdf  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.eot   binary
+*.mp4  binary
+*.tar.gz binary

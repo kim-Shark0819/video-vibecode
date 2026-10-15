@@ -1,0 +1,100 @@
+#!/bin/bash
+# 렌더링된 산출물입니다. 값을 바꾸려면 deploy/config.env를 수정하고 render.py를 다시 실행하세요.
+set -euo pipefail
+export HOME=/root KUBECONFIG=/root/.kube/config AWS_DEFAULT_REGION=${AWS_REGION}
+aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER_NAME} --kubeconfig "$KUBECONFIG" >/dev/null
+
+NS=${K8S_NAMESPACE}
+POD=$(kubectl get pods -n "$NS" -l app.kubernetes.io/name=${APP_SERVICE_ACCOUNT} -o jsonpath='{.items[0].metadata.name}')
+echo "target pod: $POD"
+
+echo '--- IRSA identity in pod ---'
+kubectl exec -n "$NS" "$POD" -- python -c "
+import boto3
+print(boto3.client('sts').get_caller_identity()['Arn'])
+"
+
+echo '--- account guard state ---'
+kubectl exec -n "$NS" "$POD" -- python -c "
+import json, urllib.request
+payload = json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=10))
+print(json.dumps(payload.get('account', {}), ensure_ascii=False))
+"
+
+echo '--- login (correct credentials) ---'
+# 자격증명을 스크립트에 박지 않는다. 파드 안의 환경변수(Secret 주입값)를 그대로 쓴다.
+# 값은 출력하지 않고 토큰 길이만 확인한다.
+TOKEN=$(kubectl exec -n "$NS" "$POD" -- python -c "
+import json, os, urllib.request
+body = json.dumps({'username': os.environ['ADMIN_USERNAME'], 'password': os.environ['ADMIN_PASSWORD']}).encode()
+req = urllib.request.Request('http://127.0.0.1:8000/api/auth/login', data=body, headers={'Content-Type': 'application/json'})
+print(json.load(urllib.request.urlopen(req, timeout=10))['token'])
+")
+echo "token length: ${#TOKEN}"
+
+echo '--- login (wrong credentials must fail) ---'
+kubectl exec -n "$NS" "$POD" -- python -c "
+import json, urllib.request, urllib.error
+body = json.dumps({'username': 'admin', 'password': 'wrong-password'}).encode()
+req = urllib.request.Request('http://127.0.0.1:8000/api/auth/login', data=body, headers={'Content-Type': 'application/json'})
+try:
+    urllib.request.urlopen(req, timeout=10)
+    print('UNEXPECTED: wrong password accepted')
+    raise SystemExit(1)
+except urllib.error.HTTPError as e:
+    print('rejected with HTTP', e.code)
+"
+
+echo '--- unauthenticated access must fail ---'
+kubectl exec -n "$NS" "$POD" -- python -c "
+import urllib.request, urllib.error
+try:
+    urllib.request.urlopen('http://127.0.0.1:8000/api/dashboard', timeout=10)
+    print('UNEXPECTED: dashboard open without auth')
+    raise SystemExit(1)
+except urllib.error.HTTPError as e:
+    print('rejected with HTTP', e.code)
+"
+
+echo '--- dashboard (S3 ListBucket via IRSA) ---'
+kubectl exec -n "$NS" "$POD" -- env TOKEN="$TOKEN" python -c "
+import json, os, urllib.request
+req = urllib.request.Request('http://127.0.0.1:8000/api/dashboard', headers={'Authorization': 'Bearer ' + os.environ['TOKEN']})
+print(json.dumps(json.load(urllib.request.urlopen(req, timeout=15)), indent=2, ensure_ascii=False))
+"
+
+echo '--- image upload (S3 PutObject via IRSA) ---'
+kubectl exec -n "$NS" "$POD" -- env TOKEN="$TOKEN" python -c "
+import base64, json, os, urllib.request, uuid
+png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==')
+boundary = 'kiro' + uuid.uuid4().hex
+parts = []
+parts.append(('--' + boundary + '\r\n').encode())
+parts.append(b'Content-Disposition: form-data; name=\"file\"; filename=\"verify-scene.png\"\r\n')
+parts.append(b'Content-Type: image/png\r\n\r\n')
+parts.append(png)
+parts.append(('\r\n--' + boundary + '--\r\n').encode())
+body = b''.join(parts)
+req = urllib.request.Request('http://127.0.0.1:8000/api/assets', data=body,
+    headers={'Content-Type': 'multipart/form-data; boundary=' + boundary, 'Authorization': 'Bearer ' + os.environ['TOKEN']})
+print(json.dumps(json.load(urllib.request.urlopen(req, timeout=30)), indent=2, ensure_ascii=False))
+"
+
+echo '--- asset list after upload ---'
+kubectl exec -n "$NS" "$POD" -- env TOKEN="$TOKEN" python -c "
+import json, os, urllib.request
+req = urllib.request.Request('http://127.0.0.1:8000/api/assets', headers={'Authorization': 'Bearer ' + os.environ['TOKEN']})
+data = json.load(urllib.request.urlopen(req, timeout=15))
+print('asset count:', len(data['items']))
+for item in data['items'][:5]:
+    print(' -', item['key'], item['size'], 'bytes')
+"
+
+echo '--- video list ---'
+kubectl exec -n "$NS" "$POD" -- env TOKEN="$TOKEN" python -c "
+import json, os, urllib.request
+req = urllib.request.Request('http://127.0.0.1:8000/api/videos', headers={'Authorization': 'Bearer ' + os.environ['TOKEN']})
+print('video count:', len(json.load(urllib.request.urlopen(req, timeout=15))['items']))
+"
+
+echo 'API VERIFICATION COMPLETE'

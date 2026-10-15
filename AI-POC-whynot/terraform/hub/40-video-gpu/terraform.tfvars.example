@@ -1,0 +1,53 @@
+# 복사해서 terraform.tfvars 로 쓴다. *.tfvars 는 .gitignore 대상이다.
+#
+# 계정 ID 는 환경 종속 값이므로 여기에 실제 값을 적지 않는다.
+# 워크스페이스 가드레일에 적힌 대상 계정을 넣는다.
+
+account_id  = "<12자리 계정 ID>"
+region      = "ap-northeast-2"
+aws_profile = "ai-poc-hub"
+
+# dev 로 먼저 검증하고 그 결과로 prod 에 올린다 (R-24.5)
+environment  = "dev"
+cluster_name = "Dev-AI-POC-eks"
+
+# [하드 제약] g6e 계열은 ap-northeast-2a / 2b 에만 있다.
+# private1(2a) / private2(2b) 서브넷 ID 만 넣는다. 3-AZ 로 두면 2c/2d 에서 실패한다.
+gpu_subnet_ids = [
+  "<private1 서브넷 ID (ap-northeast-2a)>",
+  "<private2 서브넷 ID (ap-northeast-2b)>",
+]
+
+# 서울 온디맨드 실측 단가 (2026-09-09)
+#   g6e.xlarge  $2.288/h  4 vCPU  32 GiB   ← 기본값
+#   g6e.2xlarge $2.757/h  8 vCPU  64 GiB
+#   g6e.4xlarge $3.694/h  16 vCPU 128 GiB
+# 세 타입 모두 L40S 1장 / VRAM 44GB. 호스트 RAM 이 부족하면 이 값만 올린다.
+gpu_instance_type = "g6e.xlarge"
+
+# 동시 처리 목표(V-13)가 정해지기 전 잠정 1
+gpu_max_size = 1
+
+# 가중치를 이미지에 굽지 않는 방침이면 100GB 로 충분하다
+gpu_disk_size = 100
+
+# ---------------------------------------------------------------------------
+# Neptune — hub/26-neptune 레이어가 소유한다. 여기서 만들지 않는다.
+#
+# 값을 얻는 방법:
+#   cd ../26-neptune
+#   terraform output -json config_env_values
+#
+# writer(클러스터) 엔드포인트를 넣는다. reader 를 넣으면 읽기만 되고
+# 쓰기가 실패해서 잡이 조용히 안 되는 상태가 된다.
+#
+# 네트워크는 추가 작업이 없다 — 관리형 노드그룹이 EKS 클러스터 SG 를 상속하고
+# 26-neptune 이 그 SG 에서 8182 를 이미 허용한다.
+# ---------------------------------------------------------------------------
+neptune_endpoint = "<dev-ai-poc-graph 의 writer 엔드포인트>"
+neptune_port     = 8182
+
+# 26-neptune 이 만든 클러스터는 현재 IAM 인증이 꺼져 있다.
+# 빈 문자열이면 neptune-db IAM 정책을 만들지 않는다.
+# IAM 인증을 켜는 작업은 26-neptune 소관이다.
+neptune_cluster_resource_id = ""

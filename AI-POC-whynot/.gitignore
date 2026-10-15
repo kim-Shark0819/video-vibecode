@@ -1,0 +1,64 @@
+# --- Terraform ---
+.terraform/
+.terraform.lock.hcl.bak
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.*
+# terraform plan -out=tfplan.<layer> 형태의 저장된 plan. 리소스 속성 전체를 담으므로 추적하지 않는다.
+tfplan
+tfplan.*
+crash.log
+crash.*.log
+# tfvars 는 계정 ID·호스트명 등 환경 종속 값을 담는다. example 만 추적한다.
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+# backend 설정도 state 버킷명에 계정 ID 가 들어간다. example 만 추적한다.
+backend.hcl
+!backend.hcl.example
+# backend.tf 는 backend.tf.example 을 복사해 만든다(terraform/README.md). 생성물이라 추적하지 않는다.
+backend.tf
+!backend.tf.example
+
+# --- 자격증명 / 비밀 ---
+# config.env 는 내장 계정 비밀번호가 평문으로 들어간다 (config.env.example 주석 근거).
+deploy/config.env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials
+credentials.json
+
+# --- kubeconfig ---
+.kube/
+
+# --- 빌드 산출물 ---
+deploy/rendered/
+.build/
+node_modules/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+
+# --- 인벤토리 원본 (마스킹 전 데이터) ---
+infra/inventory/**/raw/
+
+# --- OS / 편집기 ---
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp
+
+# --- GitHub 업로드본: 환경별 실제 설정 파일 ---
+deploy/config.*.env
+!deploy/config.env.example
+infra/inventory/

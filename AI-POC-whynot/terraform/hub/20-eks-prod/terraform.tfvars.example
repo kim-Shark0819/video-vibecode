@@ -1,0 +1,37 @@
+# AI-POC/terraform/hub/20-eks-prod
+#
+#   Copy-Item terraform.tfvars.example terraform.tfvars
+#
+# 노드그룹 속성은 **현재 실물과 같아야 한다.** 확인 명령:
+#   aws eks describe-nodegroup --cluster-name AI-POC-eks --nodegroup-name AI-POC-eks-ng \
+#     --profile ai-poc-hub --region ap-northeast-2
+
+account_id  = "730335451955"
+region      = "ap-northeast-2"
+aws_profile = "ai-poc-hub"
+
+cluster_name   = "AI-POC-eks"
+nodegroup_name = "AI-POC-eks-ng"
+node_role_arn  = "arn:aws:iam::730335451955:role/AI-POC-eks-node-role"
+
+subnet_ids = [
+  "subnet-01e0e91f3c43b57f2",
+  "subnet-071250e072cc06c64",
+  "subnet-0ac1a0b3cf1fb3c1f",
+]
+
+ami_type       = "AL2023_x86_64_STANDARD"
+capacity_type  = "ON_DEMAND"
+instance_types = ["t3.medium"]
+disk_size      = 20
+
+kubernetes_version = "1.36"
+release_version    = "1.36.3-20260827"
+
+node_labels = { environment = "prod" }
+
+# D-23 A안: 파드 상한(t3.medium = 17/노드) 때문에 1 -> 2.
+min_size        = 1
+max_size        = 2
+desired_size    = 2
+max_unavailable = 1

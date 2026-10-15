@@ -1,0 +1,8 @@
+{
+  "Rules": [
+    {
+      "ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"},
+      "BucketKeyEnabled": true
+    }
+  ]
+}

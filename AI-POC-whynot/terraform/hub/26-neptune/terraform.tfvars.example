@@ -1,0 +1,46 @@
+# AI-POC/terraform/hub/26-neptune
+#
+#   Copy-Item terraform.tfvars.example terraform.tfvars
+
+account_id  = "730335451955"
+region      = "ap-northeast-2"
+aws_profile = "ai-poc-hub"
+
+# AI-poc-vpc
+vpc_id = "vpc-0de9ff1693bd56f38"
+
+# config.env 의 PRIVATE_SUBNET_IDS (2a / 2b / 2c)
+subnet_ids = [
+  "subnet-01e0e91f3c43b57f2",
+  "subnet-071250e072cc06c64",
+  "subnet-0ac1a0b3cf1fb3c1f",
+]
+
+engine_version = "1.4.8.0"
+neptune_port   = 8182
+
+# 앱이 SigV4 서명을 하지 않아 false 여야 동작한다 (variables.tf 설명 참고).
+iam_database_authentication_enabled = false
+deletion_protection                 = true
+
+targets = {
+  dev = {
+    cluster_identifier        = "dev-ai-poc-graph"
+    subnet_group_name         = "dev-ai-poc-neptune-subnets"
+    security_group_name       = "Dev-AI-POC-neptune-sg"
+    # Dev-AI-POC-eks 클러스터 보안그룹
+    allowed_security_group_id = "sg-09275dce10e4cfeff"
+    instance_class            = "db.t4g.medium"
+    # DEV 는 유실 시 다시 만들면 된다. 최소값 1일.
+    backup_retention_days = 1
+  }
+  prod = {
+    cluster_identifier        = "ai-poc-graph"
+    subnet_group_name         = "ai-poc-neptune-subnets"
+    security_group_name       = "AI-POC-neptune-sg"
+    # AI-POC-eks 클러스터 보안그룹
+    allowed_security_group_id = "sg-022e24e853dfdc241"
+    instance_class            = "db.t4g.medium"
+    backup_retention_days     = 7
+  }
+}

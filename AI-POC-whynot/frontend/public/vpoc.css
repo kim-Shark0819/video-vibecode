@@ -1,0 +1,886 @@
+/* vpoc1 영상 기능 스타일.
+
+   선택자는 .vpoc-* 로만 쓴다. styles.css 의 색·모서리 토큰을 쓰되, 토큰이 없어도
+   보이도록 기본값을 함께 적는다(vpoc-smoke.html 은 styles.css 를 싣지 않는다). */
+
+.vpoc-root {
+  display: block;
+  color: var(--text, #1b1d21);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.vpoc-boot {
+  padding: 40px 0;
+  color: var(--text-muted, #6b7280);
+  text-align: center;
+}
+
+/* --- 상단 --- */
+
+.vpoc-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line, #e5e7eb);
+}
+
+.vpoc-topbar-title {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.vpoc-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vpoc-budget {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface-2, #f3f4f6);
+  color: var(--text-muted, #4b5563);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- 단계 표시줄 --- */
+
+.vpoc-steps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+
+.vpoc-step {
+  padding: 7px 14px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text-muted, #6b7280);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.vpoc-step:disabled {
+  cursor: default;
+}
+
+.vpoc-step.is-current {
+  border-color: var(--accent, #2563eb);
+  background: var(--accent, #2563eb);
+  color: #fff;
+  font-weight: 600;
+}
+
+.vpoc-step.is-stale {
+  color: #9ca3af;
+  background: #f9fafb;
+  text-decoration: line-through;
+}
+
+.vpoc-step.is-locked {
+  opacity: 0.45;
+}
+
+/* --- 진행 띠 · 오류 --- */
+
+.vpoc-bands {
+  display: grid;
+  gap: 10px;
+}
+
+.vpoc-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.vpoc-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(37, 99, 235, 0.25);
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: vpoc-spin 0.8s linear infinite;
+}
+
+@keyframes vpoc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vpoc-spinner {
+    animation: none;
+  }
+}
+
+.vpoc-error-box {
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fef2f2;
+  padding: 12px 14px;
+}
+
+.vpoc-error-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: #b91c1c;
+  font-size: 14px;
+}
+
+.vpoc-error-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.vpoc-error-body {
+  margin: 8px 0 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: #fff;
+  color: #7f1d1d;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.vpoc-stale {
+  color: #b45309;
+  font-size: 14px;
+}
+
+.vpoc-done {
+  color: #047857;
+  font-weight: 600;
+}
+
+/* --- 카드 --- */
+
+.vpoc-body {
+  margin-top: 16px;
+}
+
+.vpoc-card {
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 14px;
+  background: #fff;
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+
+.vpoc-card h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.vpoc-card h3 {
+  margin: 18px 0 8px;
+  font-size: 15px;
+}
+
+.vpoc-hint {
+  margin: 4px 0;
+  color: var(--text-muted, #6b7280);
+  font-size: 13.5px;
+}
+
+/* --- 입력 --- */
+
+.vpoc-field {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 12px;
+}
+
+.vpoc-field label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.vpoc-input,
+.vpoc-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  border: 1px solid var(--line, #d1d5db);
+  border-radius: 9px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  resize: vertical;
+}
+
+.vpoc-textarea {
+  min-height: 140px;
+}
+
+.vpoc-input:disabled,
+.vpoc-textarea:disabled {
+  background: #f9fafb;
+  color: #6b7280;
+}
+
+.vpoc-radios {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.vpoc-radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+/* --- 버튼 --- */
+
+.vpoc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--line, #d1d5db);
+  border-radius: 9px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.vpoc-btn:hover:not(:disabled) {
+  background: #f9fafb;
+}
+
+.vpoc-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.vpoc-btn-primary {
+  border-color: var(--accent, #2563eb);
+  background: var(--accent, #2563eb);
+  color: #fff;
+  font-weight: 600;
+}
+
+.vpoc-btn-primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.vpoc-btn-small {
+  padding: 4px 9px;
+  font-size: 12.5px;
+}
+
+.vpoc-btn-run {
+  margin-top: 14px;
+}
+
+/* --- 파일 --- */
+
+.vpoc-files {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 6px 0;
+}
+
+.vpoc-filechip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 8px;
+  background: #f9fafb;
+  font-size: 12.5px;
+  color: inherit;
+  text-decoration: none;
+  max-width: 220px;
+}
+
+.vpoc-filechip img {
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: 5px;
+}
+
+.vpoc-filechip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vpoc-filebtn {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border: 1px dashed var(--line, #d1d5db);
+  border-radius: 9px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.vpoc-filebtn input {
+  display: none;
+}
+
+/* --- 캐릭터 --- */
+
+.vpoc-charcards,
+.vpoc-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  margin: 10px 0;
+}
+
+.vpoc-charcard,
+.vpoc-sheet,
+.vpoc-imagecard {
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 11px;
+  background: #fcfcfd;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.vpoc-sheet {
+  margin-bottom: 12px;
+}
+
+.vpoc-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.vpoc-sheet-name {
+  flex: 1 1 140px;
+  font-weight: 600;
+}
+
+.vpoc-imagecard img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #f3f4f6;
+}
+
+.vpoc-imageph {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: #f3f4f6;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.vpoc-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  color: #374151;
+  font-size: 11.5px;
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+.vpoc-badge-user {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.vpoc-badge-image {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+.vpoc-badge-ai {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.vpoc-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.vpoc-tab {
+  padding: 4px 10px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.vpoc-tab.is-active {
+  border-color: var(--accent, #2563eb);
+  color: var(--accent, #2563eb);
+  font-weight: 600;
+}
+
+/* --- 질문 --- */
+
+.vpoc-question {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 11px;
+  margin-bottom: 10px;
+}
+
+.vpoc-question-text {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* --- 샷 --- */
+
+.vpoc-shots {
+  display: grid;
+  gap: 10px;
+}
+
+.vpoc-shot {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 11px;
+  background: #fff;
+}
+
+.vpoc-shot.is-review {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+
+.vpoc-shot.is-removed {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
+.vpoc-shot-no {
+  flex: 0 0 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface-2, #f3f4f6);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.vpoc-shot-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.vpoc-shot-summary {
+  margin: 0;
+  font-weight: 600;
+}
+
+.vpoc-shot-meta {
+  margin: 0;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--text-muted, #6b7280);
+  font-size: 13px;
+}
+
+.vpoc-chip {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 12px;
+}
+
+.vpoc-review {
+  margin: 0;
+  color: #92400e;
+  font-size: 13px;
+}
+
+.vpoc-advanced summary {
+  cursor: pointer;
+  color: var(--text-muted, #6b7280);
+  font-size: 12.5px;
+}
+
+.vpoc-advanced .vpoc-input {
+  margin-top: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+}
+
+.vpoc-cost {
+  margin: 14px 0 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.vpoc-status {
+  justify-self: start;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #374151;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.vpoc-status-queued {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.vpoc-status-submitted {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.vpoc-status-completed {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.vpoc-status-failed {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+/* --- 재생 --- */
+
+.vpoc-player {
+  display: grid;
+  gap: 6px;
+}
+
+.vpoc-video {
+  width: 100%;
+  max-width: 720px;
+  border-radius: 11px;
+  background: #000;
+}
+
+.vpoc-video-small {
+  max-width: 340px;
+}
+
+.vpoc-shotlist {
+  margin: 8px 0 0;
+  padding-left: 22px;
+  color: var(--text-muted, #4b5563);
+  font-size: 13.5px;
+}
+
+.vpoc-inputtext {
+  margin: 6px 0;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--surface-2, #f9fafb);
+  font-family: inherit;
+  font-size: 13.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* --- 확인 창 --- */
+
+.vpoc-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.5);
+  display: grid;
+  place-items: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.vpoc-modal {
+  width: min(460px, 100%);
+  border-radius: 14px;
+  background: #fff;
+  padding: 22px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+}
+
+.vpoc-modal h3 {
+  margin: 0 0 10px;
+  font-size: 17px;
+}
+
+.vpoc-modal p {
+  margin: 6px 0;
+  font-size: 14px;
+  color: var(--text-muted, #4b5563);
+}
+
+.vpoc-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+/* --- 테스트 페이지 (vpoc-smoke.html) --- */
+
+.vpoc-smoke-body {
+  margin: 0;
+  background: #f8fafc;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #1b1d21;
+}
+
+.vpoc-smoke {
+  max-width: 760px;
+  margin: 48px auto;
+  padding: 28px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+.vpoc-smoke h1 {
+  margin: 0 0 10px;
+  font-size: 21px;
+}
+
+.vpoc-smoke-note {
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.vpoc-smoke-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 18px 0;
+}
+
+.vpoc-smoke-video {
+  width: 100%;
+  border-radius: 11px;
+  background: #000;
+  margin-top: 14px;
+}
+
+.vpoc-smoke-prompt {
+  margin-top: 18px;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.vpoc-smoke-prompt pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.vpoc-error {
+  padding: 12px;
+  border: 1px solid #fecaca;
+  border-radius: 9px;
+  background: #fef2f2;
+  color: #7f1d1d;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* --- vpoc-regen: 이 샷만 의견 반영해 다시 만들기 --- */
+
+.vpoc-regen-open {
+  justify-self: start;
+}
+
+.vpoc-regen-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 11px;
+  background: #f8fbff;
+}
+
+.vpoc-regen-title {
+  margin: 0;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.vpoc-regen-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.vpoc-regen-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--line, #d1d5db);
+  border-radius: 999px;
+  background: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.vpoc-regen-chip:hover {
+  border-color: var(--accent, #2563eb);
+  color: var(--accent, #2563eb);
+}
+
+.vpoc-regen-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.vpoc-regen-limit {
+  margin: 4px 0 0;
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.vpoc-regen-note {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 13px;
+}
+
+.vpoc-regen-compare {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.vpoc-regen-col {
+  display: grid;
+  gap: 5px;
+  align-content: start;
+  padding: 10px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.vpoc-regen-col-new {
+  border-color: var(--accent, #2563eb);
+}
+
+.vpoc-regen-col h4 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted, #6b7280);
+}
+
+.vpoc-regen-col p {
+  margin: 0;
+  font-size: 13.5px;
+}
+
+.vpoc-regen-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.vpoc-regen-versions {
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 9px;
+  padding: 8px 10px;
+  background: #fcfcfd;
+}
+
+.vpoc-regen-versions summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vpoc-regen-version {
+  display: grid;
+  gap: 5px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line, #f3f4f6);
+}
+
+.vpoc-regen-version-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+
+.vpoc-regen-stale {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 13.5px;
+}
