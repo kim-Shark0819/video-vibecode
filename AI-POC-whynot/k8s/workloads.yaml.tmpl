@@ -308,6 +308,15 @@ spec:
                   name: ${SEEDANCE_SECRET_NAME}
                   key: ark-api-key
                   optional: true
+            # fal.ai API 키(설계자 2026-10-18). ARK_API_KEY 와 같은 모양 — 아직 Secret 이 없으면
+            # optional 이라 파드는 그대로 뜨고, 그때는 ② 모델 고르기에서 fal 이 "fal API 키 미설정"
+            # 으로 보이고 카탈로그/등록 API 가 409 를 돌려준다.
+            - name: FAL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ${FAL_SECRET_NAME}
+                  key: fal-api-key
+                  optional: true
             # 요청 본문 스키마를 공식 문서로 확인했는가. 확인 전에는 live 제출을 막는다.
             - name: SEEDANCE_SCHEMA_VERIFIED
               value: "${SEEDANCE_SCHEMA_VERIFIED}"

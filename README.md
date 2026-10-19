@@ -2,7 +2,7 @@
 
 웹툰 컷 이미지를 올리면 이야기 · 인물을 분석하고, 키 장면(콘티)을 그린 뒤 소리가 들어간 영상(final.mp4)까지 만드는 시스템의 코드와 구성 문서.
 
-기준: 2026-10-15 · 운영 배포본과 같은 커밋(`56f9c57`, 이미지 `ci-56f9c578`).
+기준: 2026-10-19 · 운영 배포본과 같은 커밋(`fceb363`, 이미지 `ci-fceb3634`).
 
 ## 폴더
 
@@ -20,9 +20,11 @@
 | 화면 | 하는 일 | 서버 코드 | 외부 모델 |
 |---|---|---|---|
 | ① 원작 입력 | 웹툰 컷 업로드 → 이야기 · 인물 · 장면 추출 | `app/src/vpoc/routes.py`, `llm.py`, `images.py` | Claude (Amazon Bedrock) |
-| ② 확인 · 설정 | 영상 모델 · 제작 방식(키 장면/샷별) · 길이 · 화풍 | `routes.py`, `compose.py` | Claude |
-| ③ 계획 승인 | 5초 간격 키 장면 러프 → 수정 → 완성 그림 | `seedream.py`, `images.py` | Seedream 5.0 (BytePlus), SD3.5 (Bedrock) |
-| ④ 영상 | 구간 영상 순차 생성(소리 포함) → 합치기 | `ark.py`, `video.py`, `regen.py`, `app/src/stitcher.py` | Seedance 2.0/2.5 (BytePlus), Luma Ray2 (Bedrock) |
+| ② 확인 · 설정 | 영상 모델(Luma · Seedance · fal.ai 등록 모델) · 영상 길이(모델이 한 번에 만들 수 있는 범위) · 화풍 | `routes.py`, `compose.py`, `fal.py` | Claude, fal 카탈로그 |
+| ③ 계획 승인 | **마스터 프롬프트 1개** = 화풍 + 고정 배경(프롬프트+그림) + 고정 인물(외모 프롬프트+사진) + 시간대별 장면. 장면마다 미리보기 그림(확인용) | `routes.py`, `llm.py`, `compose.master_video_prompt`, `seedream.py` | Claude, Seedream 5.0 |
+| ④ 영상 | 승인한 마스터 프롬프트 **그대로** 영상 1개 생성(인물 사진+배경 그림을 참고 이미지로, 미리보기 그림은 넣지 않음) | `ark.py`, `fal.py`, `video.py`, `regen.py`, `app/src/stitcher.py` | Seedance 2.0/2.5, fal.ai(Kling·Veo·Hailuo…), Luma Ray2 |
+
+> 이전 방식(샷/구간별로 나눠 만든 뒤 이어붙이기)은 이미 만든 계획에서만 그대로 동작한다.
 
 ## 인프라 (운영)
 

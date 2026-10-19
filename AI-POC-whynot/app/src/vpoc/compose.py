@@ -289,3 +289,69 @@ def check_character(character: dict) -> list[str]:
                 f"character {character.get('id')}: {field} 가 {limit}자를 넘습니다 ({len(value)}자)"
             )
     return problems
+
+
+
+# ---------------------------------------------------------------- 마스터 프롬프트(영상 1개)
+
+# 영상 1개(single, 설계자 2026-10-19): 샷/구간이 아니라 "마스터 프롬프트 1개 + 고정 인물 + 고정 배경"
+# 으로 영상 하나를 만든다. 아래 한 함수가 최종 영상 프롬프트의 유일한 출처다 — 미리보기 화면 표시와
+# 영상 제출이 같은 문자열을 쓴다. 그림이 아니라 이 프롬프트가 기준이다(수정하면 이 문장이 바뀐다).
+# ark.MAX_PROMPT_CHARS(4000)와 맞추되, compose 는 ark 를 import 하지 않으므로 한도를 인자로 받는다.
+MASTER_MAX_PROMPT_CHARS = 4000
+
+
+def master_video_prompt(master: dict, *, max_chars: int = MASTER_MAX_PROMPT_CHARS) -> str:
+    """영상 1개(single)의 최종 영상 프롬프트. 설계자 2026-10-19.
+
+    구성(순서 고정):
+      화풍 → "Setting (keep identical for the whole video): <background.promptEn>"
+      → 인물별 "<handle>: <promptEn> (keep exactly this look)"
+      → "One continuous shot, no cuts." → 시간 순서 비트 "From 0s to 4s: <actionEn> <cameraEn>" …
+
+    길이 제한(max_chars)을 넘으면 **비트 문장만** 경계에서 줄여 맞춘다(자르는 것이 아니라 비트별 예산
+    축소). 화풍 · 배경 · 인물은 그대로 둔다 — 그것이 "같은 모습 · 같은 배경"의 기준이기 때문이다.
+    """
+    master = master or {}
+    style = str(master.get("styleEn") or "").strip().rstrip(".")
+    background = master.get("background") or {}
+    bg_prompt = str(background.get("promptEn") or "").strip().rstrip(".")
+    characters = [item for item in (master.get("characters") or []) if isinstance(item, dict)]
+    beats = [item for item in (master.get("beats") or []) if isinstance(item, dict)]
+
+    head_parts: list[str] = []
+    if style:
+        head_parts.append(style + ".")
+    if bg_prompt:
+        head_parts.append(f"Setting (keep identical for the whole video): {bg_prompt}.")
+    for item in characters:
+        handle = str(item.get("handleEn") or "the character").strip()
+        look = str(item.get("promptEn") or "").strip().rstrip(".")
+        if look:
+            head_parts.append(f"{handle}: {look} (keep exactly this look).")
+    head_parts.append("One continuous shot, no cuts.")
+    head = " ".join(part for part in head_parts if part)
+
+    def _beat_sentence(beat: dict, budget: int) -> str:
+        t0 = int(round(float(beat.get("t0") or 0)))
+        t1 = int(round(float(beat.get("t1") or t0)))
+        action = str(beat.get("actionEn") or "").strip().rstrip(".")
+        camera = str(beat.get("cameraEn") or "").strip().rstrip(".")
+        body = (action + ((". " + camera) if camera else "")).strip()
+        prefix = f"From {t0}s to {t1}s: "
+        inner = _fit_text(body, max(1, budget - len(prefix) - 1))
+        return (prefix + inner).rstrip() + "."
+
+    # 비트 전체 예산 = max_chars - (앞부분 + 한 칸). 비트들이 고르게 나눠 쓴다.
+    budget = max(0, max_chars - len(head) - 1)
+    per_beat = max(40, budget // len(beats)) if beats else 0
+    beat_sentences = [_beat_sentence(beat, per_beat) for beat in beats]
+    prompt = (head + " " + " ".join(beat_sentences)).strip() if beat_sentences else head
+
+    # 그래도 넘으면 비트 예산을 더 줄여 한 번 더 맞춘다(화풍·배경·인물은 건드리지 않는다).
+    if len(prompt) > max_chars and beats:
+        budget = max(0, max_chars - len(head) - 1)
+        per_beat = max(20, budget // len(beats))
+        beat_sentences = [_beat_sentence(beat, per_beat) for beat in beats]
+        prompt = (head + " " + " ".join(beat_sentences)).strip()
+    return prompt

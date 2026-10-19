@@ -692,9 +692,16 @@ def storyboard(
     story_text: str,
     total_s: int,
     interval_s: int,
+    count: int | None = None,
 ) -> tuple[dict, dict]:
-    """웹툰 전체를 보고 키 장면(interval 초마다)과 그 사이 움직임을 정한다(설계자 2026-10-14)."""
-    count = total_s // interval_s + 1
+    """웹툰 전체를 보고 키 장면(interval 초마다)과 그 사이 움직임을 정한다(설계자 2026-10-14).
+
+    설계자 2026-10-19: 영상 1개(single) 방식은 키 장면 수를 직접 정한다(간격이 실수라 total//interval
+    로 셀 수 없다). count 를 주면 그 수를 그대로 쓰고, 안 주면 기존대로 total_s // interval_s + 1.
+    """
+    if count is None:
+        count = total_s // interval_s + 1
+    count = max(2, int(count))
     system = BOARD_SYSTEM.format(
         interval=interval_s, total=total_s, count=count, segments=count - 1
     )
@@ -1086,3 +1093,110 @@ def check_shots(payload: dict, characters: list[dict], style: str) -> list[str]:
             problems.append(f"shot {shot_id}: cameraKo 가 40자를 넘습니다")
         problems.extend(compose.check_shot(shot, characters, style))
     return problems
+
+
+
+# ---------------------------------------------------------------- 마스터 계획(영상 1개)
+
+# 영상 1개(single, 설계자 2026-10-19): 샷/구간 콘티 대신 "마스터 프롬프트 1개 + 고정 배경 + 고정 인물"
+# 을 만든다. Claude 가 웹툰 패널 + 인물 + 총 길이를 보고 배경(영어/한국어) · 비트(2~4개, 0~총길이를
+# 빈틈없이 덮음) · 인물별 외모 보강 문장을 돌려준다. 기존 _converse/tool 방식과 모델 체인을 그대로 쓴다.
+EMIT_MASTER = {
+    "name": "emit_master",
+    "description": "Return the master plan for one continuous video.",
+    "inputSchema": {
+        "json": {
+            "type": "object",
+            "properties": {
+                "backgroundEn": {"type": "string"},
+                "backgroundKo": {"type": "string"},
+                "beats": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "t0": {"type": "number"},
+                            "t1": {"type": "number"},
+                            "actionEn": {"type": "string"},
+                            "cameraEn": {"type": "string"},
+                            "descKo": {"type": "string"},
+                            "characters": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "required": ["t0", "t1", "actionEn", "cameraEn", "descKo", "characters"],
+                    },
+                },
+                "characters": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "appearanceEn": {"type": "string"},
+                        },
+                        "required": ["id", "appearanceEn"],
+                    },
+                },
+            },
+            "required": ["backgroundEn", "beats"],
+        }
+    },
+}
+
+MASTER_SYSTEM = """You plan ONE short continuous video (a single take, no cuts) made from a webtoon.
+The whole video keeps ONE fixed background and the SAME characters throughout. The webtoon panels are in
+story order; spread the story evenly across the beats. Write English for every *En field, Korean for *Ko.
+- backgroundEn (<= 300 chars): the single setting shared by the whole video — place, time of day, lighting,
+  key props. One empty location only, with NO people in it (a background plate). Never mention characters.
+- backgroundKo (<= 120 chars): the same, in Korean, for the planner to read.
+- beats: {min_beats}-{max_beats} beats whose [t0,t1) seconds tile 0..{total} with NO gaps and NO overlaps
+  (first t0=0, last t1={total}, each t0 equals the previous t1). For each beat:
+    - actionEn (<= 240 chars): what the characters physically do in this time span, as continuous motion.
+    - cameraEn (<= 80 chars): one camera movement for this span (e.g. "slow push-in", "static wide").
+    - descKo (<= 70 chars): what happens, in Korean.
+    - characters: ids of the characters on screen in this beat.
+  Refer to characters ONLY by their handles. Never describe faces, hair, skin or clothes inside beats.
+- characters: for EACH given character, appearanceEn (<= 200 chars) — a clean English look description
+  (hair, build, clothing, colors). If the character already has an appearance, keep its meaning.
+No dialogue text, no speech bubbles, no captions. Answer only with the emit_master tool."""
+
+
+def master_plan(
+    panel_jpegs: list[bytes],
+    characters: list[dict],
+    *,
+    story_text: str,
+    total_s: int,
+    min_beats: int,
+    max_beats: int,
+) -> tuple[dict, dict]:
+    """웹툰 전체 + 인물 + 총 길이 → 배경 · 비트(2~4) · 인물별 외모(설계자 2026-10-19).
+
+    기존 appearanceEn 이 있으면 그 뜻을 유지하도록 프롬프트로 지시한다. 비트의 시간 구간이
+    0~total 을 빈틈없이 덮게 하고, 어긋나면 호출부(routes)가 정규화한다.
+    """
+    system = MASTER_SYSTEM.format(total=total_s, min_beats=min_beats, max_beats=max_beats)
+    cast = "\n".join(
+        f"- id={item.get('id')} handle=\"{item.get('handleEn')}\" ({item.get('nameKo') or ''}) "
+        f"appearance=\"{str(item.get('appearanceEn') or '').strip()}\""
+        for item in characters
+    ) or "(none)"
+    blocks: list[dict] = [
+        {
+            "text": (
+                f"Story: {story_text[:2500]}\nCharacters:\n{cast}\n"
+                f"Video length {total_s}s. Use {min_beats}-{max_beats} beats that tile 0..{total_s}s.\n"
+                f"The next {len(panel_jpegs)} images are the webtoon panels in order."
+            )
+        }
+    ]
+    for jpeg in panel_jpegs:
+        blocks.append({"image": {"format": "jpeg", "source": {"bytes": _shrink(jpeg)}}})
+    payload, usage = _converse(
+        system_text=system,
+        blocks=blocks,
+        tool=EMIT_MASTER,
+        max_tokens=4000,
+        where="claude.master_plan",
+        model=settings.ANALYZE_MODEL,
+    )
+    return payload or {}, usage

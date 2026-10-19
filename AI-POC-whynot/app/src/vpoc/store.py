@@ -129,6 +129,15 @@ def keyframe_key(owner: str, pid: str, plan_id: str, keyframe_id: str, kind: str
     return f"{base_prefix(owner, pid)}/plans/{plan_id}/keyframes/{keyframe_id}/{kind}-{image_id}.jpg"
 
 
+def master_background_key(owner: str, pid: str, plan_id: str, image_id: str) -> str:
+    """영상 1개(single)의 배경 그림(인물 없음) 키. 설계자 2026-10-19.
+
+    IRSA 가 `users/*` 로 제한되므로 그 아래에 둔다. 마스터 1개 = 배경 1장이지만 다시 그릴 때마다
+    새 image_id 를 써서 캐시가 섞이지 않게 한다.
+    """
+    return f"{base_prefix(owner, pid)}/plans/{plan_id}/master/background-{image_id}.jpg"
+
+
 def plans_prefix(owner: str, pid: str) -> str:
     return f"{base_prefix(owner, pid)}/plans/"
 

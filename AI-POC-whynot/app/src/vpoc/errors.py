@@ -34,7 +34,17 @@ class VpocError(Exception):
 
 # 우리가 직접 만든 안내 문구라 운영에서도 그대로 보여 준다(원문 감추기 대상이 아니다).
 # 감추면 사용자가 "처리 중 오류(코드: BadDuration)"만 보고 무엇을 고칠지 모른다(2026-10-13).
-USER_FACING_KINDS = {"BadDuration"}
+# fal.py 가 직접 쓴 한국어 안내 kind 도 같은 취지로 더한다. 원문이 외부 응답 그대로인
+# HTTP<code> · NoRequestId 는 제외한다(감출 이유가 있다)(2026-10-19).
+USER_FACING_KINDS = {
+    "BadDuration",
+    "FalBalanceExhausted",
+    "FalKeyMissing",
+    "FalUnreachable",
+    "AlreadyRegistered",
+    "SchemaUnreadable",
+    "ModelUnavailable",
+}
 
 
 def envelope(where: str, exc: BaseException) -> dict:

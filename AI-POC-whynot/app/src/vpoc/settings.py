@@ -67,6 +67,14 @@ ARK_GENERATE_AUDIO = _flag("VPOC_ARK_GENERATE_AUDIO", "true")
 KEYFRAME_INTERVAL_S = _int("VPOC_KEYFRAME_INTERVAL_S", 5)
 KEYFRAME_TOTAL_CHOICES = (20, 30, 40, 60)
 KEYFRAME_TOTAL_DEFAULT = 30
+# 영상 1개 한 번에(single) 방식(설계자 2026-10-19): 샷별로 나눠 만들지 않고, ② 에서 고른 길이(초)의
+# 영상 하나만 만든다. 길이는 고른 모델이 한 번에 만들 수 있는 범위(VIDEO_DURATION_RANGE · fal caps)
+# 안에서 고른다 — 20/30/40/60 고정 선택지는 없앴다. ③ 키 장면 콘티는 그대로 두고, 완성 키 장면을
+# 참고/시작·끝 이미지로 쓴다. 키 장면 수 = clamp(ceil(초 / KEYFRAME_INTERVAL_S) + 1, 2, SINGLE_MAX_KEYFRAMES).
+SINGLE_MIN_KEYFRAMES = 2
+SINGLE_MAX_KEYFRAMES = 4
+# 길이를 못 고른 옛/깨진 값일 때의 기본값은 min(SINGLE_DURATION_DEFAULT, 모델 최대). routes 가 계산한다.
+SINGLE_DURATION_DEFAULT = _int("VPOC_SINGLE_DURATION_DEFAULT", 10)
 SEEDREAM_ROUGH_MODEL = os.getenv("VPOC_SEEDREAM_ROUGH_MODEL", "dola-seedream-5-0-flash-260915")
 SEEDREAM_FINAL_MODEL = os.getenv("VPOC_SEEDREAM_FINAL_MODEL", "dola-seedream-5-0-pro-260628")
 SEEDREAM_USD = _float("VPOC_SEEDREAM_USD", 0.035)
@@ -117,6 +125,41 @@ ARK_USD_PER_SEC = {
     "seedance-2-0": os.getenv("VPOC_ARK_USD_PER_SEC_2_0", ""),
     "seedance-2-5": os.getenv("VPOC_ARK_USD_PER_SEC_2_5", ""),
 }
+
+# fal.ai — 키 하나로 수백 개의 영상 모델(Kling · MiniMax Hailuo · Wan · Veo …)을 큐 API 로 부른다
+# (설계자 2026-10-18). Seedance(ark.py)와 같은 "외부 영상 공급자" 경로를 탄다. 키는 Secret 에서만
+# 온다(FAL_KEY). 사용자가 ② 화면에서 "fal 에서 모델 가져오기"로 등록한 모델만 ② 목록에 나타난다.
+FAL_KEY = os.getenv("FAL_KEY", "")
+# 큐 API(제출·조회)와 모델 카탈로그/스키마 API 는 호스트가 다르다. 둘 다 env 로 덮어쓸 수 있다.
+FAL_QUEUE_URL = os.getenv("FAL_QUEUE_URL", "https://queue.fal.run").rstrip("/")
+FAL_API_URL = os.getenv("FAL_API_URL", "https://api.fal.ai/v1").rstrip("/")
+# 모델 스키마 공개 주소(인증 불필요). `/v1/models?expand=openapi-3.0` 이 실제로는
+# `{"error":{"code":"expansion_failed"}}` 를 돌려주므로(실측 2026-10-18), 그때 이 주소로 대체한다.
+# `?endpoint_id=<id>` 를 붙여 GET 하면 정상 OpenAPI 3 를 준다.
+FAL_OPENAPI_URL = os.getenv("FAL_OPENAPI_URL", "https://fal.ai/api/openapi/queue/openapi.json").rstrip("/")
+# fal 모델 ID 형식: "fal:<endpoint_id>" (예: "fal:fal-ai/kling-video/v3/pro/image-to-video").
+# ARK 모델 ID("seedance-2-0" 등)와 겹치지 않게 접두사로 가른다.
+FAL_ID_PREFIX = "fal:"
+# 영상 단계에서 실제로 쓸 수 있는 fal 카테고리. 나머지는 카탈로그 목록에만 보이고 등록은 거절된다.
+FAL_VIDEO_CATEGORIES = ("text-to-video", "image-to-video")
+# 카탈로그 조회에서 함께 보여 주는(목록만, 영상 단계 사용 불가) 카테고리.
+FAL_BROWSE_CATEGORIES = (
+    "text-to-video",
+    "image-to-video",
+    "video-to-video",
+    "image-to-3d",
+    "text-to-3d",
+)
+
+
+def is_fal(model: str) -> bool:
+    """fal 모델 ID("fal:<endpoint_id>") 인지."""
+    return str(model or "").startswith(FAL_ID_PREFIX)
+
+
+def fal_endpoint_id(model: str) -> str:
+    """fal 모델 ID 에서 endpoint_id 만 떼어 낸다. fal 이 아니면 빈 문자열."""
+    return str(model or "")[len(FAL_ID_PREFIX):] if is_fal(model) else ""
 
 # ③ 영상 설정 — 사용자가 화질과 샷 길이를 고른다(설계자 2026-10-07).
 # 샷 길이 상한: Seedance 2.0 15초 · 2.5 15초 · Luma Ray2 5초. 하한은 4초.
@@ -199,3 +242,26 @@ def shot_usd(model: str = "", resolution: str = "", seconds: float | None = None
         per_sec = ark_usd_per_sec(model, resolution)
         return round((per_sec or 0.0) * secs, 4)
     return round(VIDEO_USD_PER_SEC.get(resolution or RESOLUTION, 0.75) * secs, 4)
+
+
+def single_keyframe_count(total_s: int) -> int:
+    """영상 1개(single) 방식의 키 장면 수(설계자 2026-10-19).
+
+    clamp(ceil(초 / KEYFRAME_INTERVAL_S) + 1, SINGLE_MIN_KEYFRAMES, SINGLE_MAX_KEYFRAMES).
+    """
+    import math
+
+    seconds = max(1, int(total_s or 1))
+    raw = math.ceil(seconds / max(1, KEYFRAME_INTERVAL_S)) + 1
+    return max(SINGLE_MIN_KEYFRAMES, min(SINGLE_MAX_KEYFRAMES, raw))
+
+
+def single_interval_s(total_s: int) -> float:
+    """키 장면 사이 간격(초, 실수). 간격 = 초 / (키 장면 수 - 1)."""
+    count = single_keyframe_count(total_s)
+    return float(total_s) / max(1, count - 1)
+
+
+def single_default_duration(low: int, high: int) -> int:
+    """고르기 전/범위 밖 값일 때 쓸 길이. min(SINGLE_DURATION_DEFAULT, 최대)이되 최소 이상."""
+    return max(int(low), min(int(SINGLE_DURATION_DEFAULT), int(high)))

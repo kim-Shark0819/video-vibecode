@@ -19,7 +19,7 @@ from typing import Callable
 from flask import Blueprint, jsonify, request
 
 from . import seedream  # noqa: F401  (키 장면)
-from . import ark, compose, images, ledger, llm, regen, settings, store, video
+from . import ark, compose, fal, images, ledger, llm, regen, settings, store, video
 from .errors import VpocError, envelope, now_iso, status_for
 
 log = logging.getLogger("vpoc")
@@ -153,6 +153,44 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
         except (TypeError, ValueError):
             seconds = settings.DURATION_S
         return max(low, min(high, seconds))
+
+    def _make_mode(step2: dict, model: str, step3: dict | None = None) -> str:
+        """이 계획의 제작 방식(설계자 2026-10-19).
+
+        1) ② 저장값(single/keyframes/shots)이 있으면 그대로 — 가장 먼저 본다.
+        2) step3 가 주어졌고 ③ 계획이 이미 있으면(makeMode 저장값 · shots · keyframes 중 하나라도 있으면)
+           옛 계획이다 — ③ makeMode 저장값을 따르고, 없으면 keyframes 가 있으면 "keyframes" 아니면 "shots".
+           10/14 이전 계획은 ② 에 makeMode 가 없어도 ③ 가 이미 만들어져 있어, 이것을 single 로 덮으면
+           옛 화면·진행이 깨진다(데이터 영향 금지).
+        3) 그 밖(새로 시작한 계획)은 모델 고르기가 켜진 배포면 single, 아니면 shots.
+        """
+        saved = str(step2.get("makeMode") or "")
+        if saved in ("single", "keyframes", "shots"):
+            return saved
+        if step3 is not None:
+            step3_saved = str(step3.get("makeMode") or "")
+            has_shots = bool(step3.get("shots"))
+            has_keyframes = bool(step3.get("keyframes"))
+            if step3_saved in ("single", "keyframes", "shots") or has_shots or has_keyframes:
+                if step3_saved in ("single", "keyframes", "shots"):
+                    return step3_saved
+                return "keyframes" if has_keyframes else "shots"
+        if settings.MODEL_PICKER_ENABLED:
+            return "single"
+        return "shots"
+
+    def _single_total(step2: dict, model: str) -> int:
+        """single 영상 1개의 길이(초). ② 에서 고른 totalSeconds 를 모델 범위로 맞춘다(없으면 기본값)."""
+        options = ark.video_options(model)
+        low = int(options.get("minDurationS") or settings.DURATION_S)
+        high = int(options.get("maxDurationS") or settings.DURATION_S)
+        try:
+            total = int(step2.get("totalSeconds") or 0)
+        except (TypeError, ValueError):
+            total = 0
+        if not total:
+            return settings.single_default_duration(low, high)
+        return max(low, min(high, total))
 
     def _reference_characters(steps: dict, plan_shot: dict) -> list[tuple[str, str, str, str]]:
         """샷에 나오는 캐릭터 중 이미지가 준비된 것 → [(id, handleEn, 이미지 키, source)] (샷의 캐릭터 순서).
@@ -325,7 +363,8 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
         if not settings.MODEL_PICKER_ENABLED or not ark.is_ark(model):
             return None
         step3 = steps["3"]
-        if step3.get("oneTake") is False or step3.get("makeMode") == "keyframes":
+        # single(영상 1개) · keyframes 는 _one_take 를 쓰지 않는다. _one_take 는 옛 샷별(shots) 전용이다.
+        if step3.get("oneTake") is False or step3.get("makeMode") in ("keyframes", "single"):
             return None
         shots = step3.get("shots") or []
         if not shots or any(not shot.get("promptEn") for shot in shots):
@@ -349,6 +388,54 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
             "characters": characters,
             "promptEn": prompt,
             "durationS": total,
+        }
+
+    def _single_take(steps: dict, model: str) -> dict | None:
+        """영상 1개 한 번에(single, 설계자 2026-10-19). 쓸 수 없으면 None.
+
+        ③ 키 장면 콘티의 구간(seg) 문장을 시간 순서 한 프롬프트로 합치고, 완성 키 장면을 시간 순서
+        참고/시작·끝 이미지로 쓴다(submit_shot 이 모델별로 고른다). 돌려주는 plan_shot 은 submit_shot 이
+        샷 하나처럼 쓴다. keyframes = 키 장면 id(시간 순서), keyframeTimes = 그 초.
+        """
+        if not settings.MODEL_PICKER_ENABLED:
+            return None
+        step3 = steps["3"]
+        if _make_mode(steps["2"], model, steps["3"]) != "single":
+            return None
+        keyframes = step3.get("keyframes") or []
+        if len(keyframes) < 2:
+            return None
+        # 구간 문장(③ 순서)을 [(시작 초, 끝 초, 문장)] 으로.
+        shots = step3.get("shots") or []
+        kf_by_id = {item.get("id"): item for item in keyframes}
+        beats: list[tuple[float, float, str]] = []
+        for shot in shots:
+            kf_ids = shot.get("keyframes") or []
+            a = kf_by_id.get(kf_ids[0]) if kf_ids else None
+            b = kf_by_id.get(kf_ids[1]) if len(kf_ids) > 1 else None
+            start = float((a or {}).get("t") or 0)
+            end = float((b or {}).get("t") or start)
+            beats.append((start, end, shot.get("promptEn") or ""))
+        if not beats:
+            return None
+        style = compose.STYLE[compose.style_of((steps["2"].get("story") or {}).get("style") or "")]
+        prompt = ark.single_take_prompt(
+            [(start, end, ark.strip_style(text, style)) for start, end, text in beats], style
+        )
+        characters: list[str] = []
+        for item in keyframes:
+            for char_id in item.get("characters") or []:
+                if char_id not in characters:
+                    characters.append(char_id)
+        total = _single_total(steps["2"], model)
+        return {
+            "id": ark.ONE_TAKE_ID,
+            "characters": characters,
+            "promptEn": prompt,
+            "durationS": total,
+            # 완성 키 장면(시간 순서). submit_shot 이 모델별 이미지 입력으로 고른다.
+            "keyframes": [item.get("id") for item in keyframes],
+            "keyframeTimes": [float(item.get("t") or 0) for item in keyframes],
         }
 
     def _shot4_view(
@@ -382,6 +469,7 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
             ),
             "versions": regen.versions_view(shot, plan_shot, gen_id),
             "revision": regen.revision_view(shot),
+            "sentPromptEn": shot.get("sentPromptEn"),  # single: 승인한 마스터 프롬프트 그대로 보낸 문장(설계자 2026-10-19)
             "regen": regen.regen_view(shot),
         }
 
@@ -426,20 +514,61 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                 )
                 row["referenceCount"] = len(entries)
             step3["shots"].append(row)
+        # 이 계획의 제작 방식(설계자 2026-10-19). single = 영상 1개 한 번에.
+        # 옛 계획(② makeMode 없음 + ③ 가 이미 있음)을 single 로 덮지 않도록 저장된 원본 steps["3"] 을 넘긴다
+        # (step3 는 view 용 복사본이라 이 시점에 shots 가 비어 있어 옛 계획 판정에 쓸 수 없다).
+        make_mode = _make_mode(steps["2"], model, steps["3"])
+        step3["makeMode"] = make_mode
+        single_mode = make_mode == "single"
+        if single_mode:
+            # 영상 1개(single): 길이는 ② totalSeconds 하나이고, 금액도 그 1개 기준이다.
+            options = ark.video_options(model)
+            single_total = _single_total(steps["2"], model)
+            step3["singleTotalS"] = single_total
+            step3["singleMinS"] = int(options.get("minDurationS") or settings.DURATION_S)
+            step3["singleMaxS"] = int(options.get("maxDurationS") or settings.DURATION_S)
         if step3.get("cost"):
-            total = sum(row["usd"] for row in step3["shots"])
-            step3["cost"] = {
-                **step3["cost"],
-                "model": model,
-                "resolution": resolution,
-                "durationS": sum(row["durationS"] for row in step3["shots"]),
-                "priceKnown": not ark.is_ark(model)
-                or settings.ark_usd_per_sec(model, resolution) is not None,
-                "perShotUsd": step3["shots"][0]["usd"] if step3["shots"] else 0,
-                "totalUsd": round(total, 2),
-            }
-        # A안 한 번에 이어서 만들기 (Seedance 전용, dev).
-        if settings.MODEL_PICKER_ENABLED and ark.is_ark(model):
+            if single_mode:
+                single_usd = settings.shot_usd(model, resolution, single_total)
+                step3["cost"] = {
+                    **step3["cost"],
+                    "model": model,
+                    "resolution": resolution,
+                    "durationS": single_total,
+                    "priceKnown": not ark.is_ark(model)
+                    or settings.ark_usd_per_sec(model, resolution) is not None,
+                    "perShotUsd": single_usd,
+                    "totalUsd": round(single_usd, 2),
+                }
+            else:
+                total = sum(row["usd"] for row in step3["shots"])
+                step3["cost"] = {
+                    **step3["cost"],
+                    "model": model,
+                    "resolution": resolution,
+                    "durationS": sum(row["durationS"] for row in step3["shots"]),
+                    "priceKnown": not ark.is_ark(model)
+                    or settings.ark_usd_per_sec(model, resolution) is not None,
+                    "perShotUsd": step3["shots"][0]["usd"] if step3["shots"] else 0,
+                    "totalUsd": round(total, 2),
+                }
+        if single_mode:
+            # 영상 1개(설계자 2026-10-19): 마스터 프롬프트 1개 + 고정 인물 + 고정 배경.
+            # 최종 영상 프롬프트는 compose.master_video_prompt 하나뿐이다(미리보기 · 영상 제출이 같다).
+            master = steps["3"].get("master") or {}
+            step3["single"] = bool(master)
+            if master:
+                master_view = _master_view(master)
+                step3["master"] = master_view
+                step3["masterPromptEn"] = compose.master_video_prompt(
+                    master, max_chars=ark.MAX_PROMPT_CHARS
+                )
+                step3["singlePromptEn"] = step3["masterPromptEn"]
+                step3["singleReferenceCount"] = len(master_view.get("characters") or []) + (
+                    1 if (master.get("background") or {}).get("imageKey") else 0
+                )
+        # A안(옛) 한 번에 이어서 만들기 — single 에서는 숨긴다(토글 없음).
+        elif settings.MODEL_PICKER_ENABLED and ark.is_ark(model):
             take = _one_take(steps, model)
             step3["oneTake"] = steps["3"].get("oneTake") is not False
             step3["oneTakeActive"] = bool(take)
@@ -631,6 +760,11 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                     "keyframes": result.get("keyframes") or [],
                 }
             )
+            # 영상 1개(single)는 마스터 데이터를 함께 넣는다(설계자 2026-10-19). 아니면 옛 master 를 지운다.
+            if result.get("master"):
+                step3["master"] = result["master"]
+            else:
+                step3.pop("master", None)
             state["currentStep"] = 3
             state["maxReachedStep"] = max(int(state.get("maxReachedStep") or 1), 3)
         elif name == "redraw":
@@ -638,6 +772,21 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
             for item in result.get("characters", []):
                 by_id[item["id"]] = item
             state["steps"]["3"]["characters"] = list(by_id.values())
+            # single: 인물 사진을 다시 그렸으면 master.characters[].imageKey 도 갱신한다(설계자 2026-10-19).
+            master = state["steps"]["3"].get("master")
+            if master and result.get("characters"):
+                new_keys = {
+                    item["id"]: (item.get("image") or {}).get("key") or ""
+                    for item in result["characters"]
+                }
+                for mchar in master.get("characters") or []:
+                    if mchar.get("id") in new_keys and new_keys[mchar["id"]]:
+                        mchar["imageKey"] = new_keys[mchar["id"]]
+                # 그 인물이 나오는 비트 미리보기는 stale(사진이 바뀌었으니 다시 그려야 맞다).
+                _mark_master_stale(state, char_ids=list(new_keys.keys()))
+            # 배경 그림을 다시 그렸으면(redraw target=background) master.background 를 갱신한다.
+            if master and result.get("background"):
+                master["background"].update(result["background"])
             if result.get("keyframes"):
                 kf_by_id = {item["id"]: item for item in state["steps"]["3"].get("keyframes") or []}
                 for item in result["keyframes"]:
@@ -804,10 +953,12 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
 
         plan_box: dict = {}
 
-        # 설계자 2026-10-14: Seedance 면 키 장면(러프 콘티) 방식이 기본이다. 샷별은 직접 고른 경우만.
-        keyframe_mode = ark.is_ark(str(step2.get("videoModel") or "")) and (
-            step2.get("makeMode") or "keyframes"
-        ) == "keyframes"
+        # 설계자 2026-10-19: 모델 고르기가 켜진 Seedance/fal 모델은 영상 1개(single)가 기본·유일이다.
+        # single = 마스터 프롬프트(_build_master). keyframes = 옛 키 장면 콘티(_make_storyboard).
+        # shots(옛)만 샷별 계획이다.
+        make_mode = _make_mode(step2, str(step2.get("videoModel") or ""))
+        board_mode = make_mode == "keyframes"
+        master_mode = make_mode == "single"
 
         def make_plan() -> None:
             try:
@@ -816,8 +967,10 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                 plan_box["error"] = exc
 
         def _make_plan_inner() -> None:
-            if keyframe_mode:
-                plan_box["board"] = _make_storyboard(owner, pid, plan_id, user, step1 or {}, step2)
+            if board_mode:
+                plan_box["board"] = _make_storyboard(
+                    owner, pid, plan_id, user, step1 or {}, step2, make_mode=make_mode
+                )
                 return
             payload, usage = llm.plan(step2)
             ledger.charge_text(
@@ -830,8 +983,12 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
             )
             plan_box["payload"] = payload
 
-        plan_thread = threading.Thread(target=make_plan, name=f"vpoc-plan-{plan_id}")
-        plan_thread.start()
+        # single 은 미리보기가 인물 사진 · 배경을 참고하므로 인물 그림이 끝난 뒤에 마스터를 만든다
+        # (병렬 계획 스레드를 쓰지 않는다). keyframes/shots 는 기존대로 병렬로 돌린다.
+        plan_thread = None
+        if not master_mode:
+            plan_thread = threading.Thread(target=make_plan, name=f"vpoc-plan-{plan_id}")
+            plan_thread.start()
 
         pending = [item for item in characters]
         while pending:
@@ -846,10 +1003,29 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
             for thread in threads:
                 thread.join()
 
-        plan_thread.join()
+        if master_mode:
+            # 인물 그림이 준비된 뒤 마스터(배경 그림 + 미리보기 콘티)를 만든다.
+            board = _build_master(
+                owner, pid, plan_id, user, step1 or {}, step2, image_results
+            )
+            return {
+                "characters": [
+                    {"id": item["id"], "image": image_results.get(item["id"], {"status": "none"})}
+                    for item in characters
+                ],
+                "shots": board["shots"],
+                "keyframes": board["keyframes"],
+                "master": board["master"],
+                "makeMode": make_mode,
+                "useKeyframes": False,
+                "cost": {"shots": len(board["shots"])},
+            }
+
+        if plan_thread is not None:
+            plan_thread.join()
         if plan_box.get("error") is not None:
             raise plan_box["error"]
-        if keyframe_mode:
+        if board_mode:
             board = plan_box.get("board")
             if not board:
                 raise VpocError("claude.storyboard", "PlanMissing", "키 장면 콘티를 받지 못했습니다.", 502)
@@ -860,7 +1036,7 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                 ],
                 "shots": board["shots"],
                 "keyframes": board["keyframes"],
-                "makeMode": "keyframes",
+                "makeMode": make_mode,
                 "useKeyframes": False,
                 "cost": {"shots": len(board["shots"])},
             }
@@ -922,6 +1098,30 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
             view[kind] = image
         return view
 
+    def _master_view(master: dict) -> dict:
+        """영상 1개(single) 마스터를 화면용으로. 이미지 키는 presigned imageUrl 로 바꾼다(설계자 2026-10-19).
+
+        background.imageKey · characters[].imageKey 를 imageUrl 로 옮기고, promptEn 등 나머지는 그대로 둔다.
+        """
+        def _url(key: str) -> str | None:
+            if not key:
+                return None
+            try:
+                return store.STORE.presign(key, content_type="image/jpeg")
+            except Exception:  # noqa: BLE001
+                return None
+
+        view = dict(master or {})
+        background = dict(master.get("background") or {})
+        background["imageUrl"] = _url(background.get("imageKey") or "")
+        view["background"] = background
+        view["characters"] = []
+        for item in master.get("characters") or []:
+            entry = dict(item)
+            entry["imageUrl"] = _url(entry.get("imageKey") or "")
+            view["characters"].append(entry)
+        return view
+
     def _draw_rough(owner: str, pid: str, plan_id: str, user: str, keyframe: dict, handles: dict) -> dict:
         """러프 콘티 1장(Seedream Flash, 연필 스케치)."""
         scene = keyframe.get("sceneEn") or ""
@@ -945,11 +1145,29 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
         )
         return {"status": "ready", "key": key, "imageId": image_id, "error": None}
 
-    def _make_storyboard(owner: str, pid: str, plan_id: str, user: str, step1: dict, step2: dict) -> dict:
-        """웹툰 전체 → 키 장면(5초 간격) + 구간 움직임 → 러프 콘티 그림."""
+    def _make_storyboard(
+        owner: str, pid: str, plan_id: str, user: str, step1: dict, step2: dict, *, make_mode: str = "keyframes"
+    ) -> dict:
+        """웹툰 전체 → 키 장면 + 구간 움직임 → 러프 콘티 그림.
+
+        keyframes(옛): 5초 간격, 키 장면 수 = total//5 + 1.
+        single(설계자 2026-10-19): 영상 1개를 위한 키 장면 수 = clamp(ceil(초/5)+1, 2, 4),
+        간격 = 초/(수-1)(실수). t 는 그 간격으로 정한다(마지막 키 장면 = total 초).
+        """
         steps_view = {"1": step1, "2": step2, "3": {}}
-        total = int(step2.get("totalSeconds") or settings.KEYFRAME_TOTAL_DEFAULT)
-        interval = settings.KEYFRAME_INTERVAL_S
+        model = str(step2.get("videoModel") or "")
+        if make_mode == "single":
+            total = _single_total(step2, model)
+            count = settings.single_keyframe_count(total)
+            interval = settings.single_interval_s(total)  # 실수
+            # 키 장면의 초. 마지막은 정확히 total 로 맞춘다(실수 반올림 오차 방지).
+            times = [round(index * interval, 2) for index in range(count)]
+            times[-1] = float(total)
+        else:
+            total = int(step2.get("totalSeconds") or settings.KEYFRAME_TOTAL_DEFAULT)
+            interval = settings.KEYFRAME_INTERVAL_S
+            count = total // interval + 1
+            times = [index * interval for index in range(count)]
         panels = _spread(_story_panels(steps_view, owner, pid), 12)
         cache: dict = {}
         panel_bytes = [images.panel_jpeg(owner, pid, f, i, cache) for f, i in panels]
@@ -959,7 +1177,8 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
             str(story.get(field) or "") for field in ("titleKo", "loglineKo", "settingKo")
         ).strip() or str(step1.get("text") or "")
         board, usage = llm.storyboard(
-            panel_bytes, characters, story_text=story_text, total_s=total, interval_s=interval
+            panel_bytes, characters, story_text=story_text, total_s=total,
+            interval_s=max(1, int(round(interval))), count=count,
         )
         ledger.charge_text(
             f"board-{plan_id}-{secrets.token_hex(3)}",
@@ -971,10 +1190,11 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
         handles = {item.get("id"): item.get("handleEn") or item.get("nameEn") or item.get("id") for item in characters}
         keyframes = []
         for index, item in enumerate(board["keyframes"]):
+            t_value = times[index] if index < len(times) else times[-1]
             keyframes.append(
                 {
                     "id": f"kf_{index:02d}",
-                    "t": index * interval,
+                    "t": t_value,
                     "summaryKo": str(item.get("summaryKo") or "")[:80],
                     "sceneEn": str(item.get("sceneEn") or "")[:600],
                     "characters": [cid for cid in item.get("characters") or [] if cid in known],
@@ -1013,7 +1233,8 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                     "useKeyframe": False,
                     "reviewKo": None,
                     "promptEn": str(segment.get("motionEn") or "")[:900],
-                    "durationS": interval,
+                    # 구간 길이 = 두 키 장면 사이 초(single 은 실수 간격, keyframes 는 5초).
+                    "durationS": round(float(b["t"]) - float(a["t"]), 2),
                     "keyframes": [a["id"], b["id"]],
                 }
             )
@@ -1124,6 +1345,44 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
             + (prompt or "")
         )
         return text, frames[0], frames[1]
+
+    def _single_inputs(
+        state: dict, owner: str, pid: str, plan_shot: dict, prompt: str
+    ) -> tuple[str, list[str], str, str]:
+        """영상 1개(single) 제출용: (문장, 참고 이미지 b64 목록, 첫 장면 b64, 끝 장면 b64).
+
+        설계자 2026-10-19: 완성 키 장면(없으면 러프)을 시간 순서 참고 이미지로 쓴다. Seedance/ fal
+        (referenceImagesField) 는 이 목록을, 참고 이미지가 없는 fal 은 첫·끝 장면을, Luma 는 첫 장면을
+        쓴다(submit_shot 이 모델별로 고른다). 남는 자리에는 인물 그림을 더할 수 있다(최대 9장).
+        문장 앞에 "Image N = n초 장면" 순서 지시를 붙인다.
+        """
+        by_id = {item["id"]: item for item in state["steps"]["3"].get("keyframes") or []}
+        kf_ids = plan_shot.get("keyframes") or []
+        times = plan_shot.get("keyframeTimes") or []
+        frames: list[str] = []
+        used_times: list[float] = []
+        for index, kf_id in enumerate(kf_ids):
+            item = by_id.get(kf_id) or {}
+            key = (item.get("final") or {}).get("key") or (item.get("rough") or {}).get("key")
+            if not key:
+                raise VpocError("routes.submit_shot", "KeyframeMissing", f"키 장면 그림이 없습니다: {kf_id}", 409)
+            if len(frames) >= MAX_REFERENCE_IMAGES:
+                break
+            frames.append(images.jpeg_for_reference(store.STORE.get_bytes(key)))
+            used_times.append(float(times[index]) if index < len(times) else float(item.get("t") or 0))
+        references = list(frames)
+        # 남는 자리(최대 9장)에 인물 그림을 더한다(있으면). 키 장면이 이미 인물을 담지만 보강용.
+        for _char_id, _handle, key, _source in _reference_characters(state["steps"], plan_shot):
+            if len(references) >= MAX_REFERENCE_IMAGES:
+                break
+            try:
+                references.append(images.keyframe_base64(key))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("vpoc.single.char_ref_failed key=%s err=%s", key, exc)
+        sent_prompt = (ark.keyframe_order_prefix(used_times) + " " + (prompt or "")).strip()
+        first = frames[0] if frames else ""
+        last = frames[-1] if frames else ""
+        return sent_prompt, references, first, last
 
     def _draw_character(
         owner: str, pid: str, plan_id: str, user: str, character: dict, story: dict, style: str
@@ -1275,6 +1534,355 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                 }
             ]
         }
+    # ---------------------------------------------------------------- 마스터 프롬프트(영상 1개, single)
+
+    # 설계자 2026-10-19: 영상 1개(single)는 "마스터 프롬프트 1개 + 고정 인물 + 고정 배경"이다.
+    # steps["3"]["master"] 에 데이터를 두고, 미리보기 콘티는 기존 keyframes 배열을 재사용한다
+    # (각 keyframe 에 beatId 를 연결). 최종 영상 프롬프트는 compose.master_video_prompt 하나뿐이다.
+    # 그림은 확인용이고, 수정 기준은 프롬프트다.
+
+    def _beat_mid_time(beat: dict) -> float:
+        """비트의 중간 시점(미리보기 콘티를 뽑을 초)."""
+        t0 = float(beat.get("t0") or 0)
+        t1 = float(beat.get("t1") or t0)
+        return round((t0 + t1) / 2.0, 2)
+
+    def _master_background_prompt(master: dict) -> str:
+        """배경 그림 1장(인물 없음)의 Seedream 프롬프트. styleEn + 배경 프롬프트 + 빈 장면 지시."""
+        style = str(master.get("styleEn") or "").strip().rstrip(".")
+        bg = str((master.get("background") or {}).get("promptEn") or "").strip().rstrip(".")
+        head = (style + ". ") if style else ""
+        return f"{head}{bg}, empty scene, no people, no text, 16:9"
+
+    def _draw_background(owner: str, pid: str, plan_id: str, user: str, master: dict) -> dict:
+        """배경 그림 1장(Seedream Final, 인물 없음). 성공하면 {status,key,imageId}."""
+        prompt = _master_background_prompt(master)
+        try:
+            jpeg = seedream.generate_safe(
+                prompt, None, model=settings.SEEDREAM_FINAL_MODEL, where="seedream.master_background"
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "failed", "error": envelope("seedream.master_background", exc)}
+        image_id = secrets.token_hex(4)
+        key = store.master_background_key(owner, pid, plan_id, image_id)
+        store.STORE.put_bytes(key, jpeg, "image/jpeg")
+        ledger.charge_seedream(
+            f"master-bg-{plan_id}-{image_id}",
+            model=settings.SEEDREAM_FINAL_MODEL, user=user, project_id=pid, plan_id=plan_id,
+        )
+        return {"status": "ready", "key": key, "imageId": image_id, "error": None}
+
+    def _beat_preview_prompt(master: dict, beat: dict) -> str:
+        """비트 미리보기 콘티(Seedream Flash)의 프롬프트.
+
+        styleEn + 배경 프롬프트 + 그 비트 인물들의 외모(promptEn) + 그 비트 actionEn/cameraEn.
+        """
+        style = str(master.get("styleEn") or "").strip().rstrip(".")
+        bg = str((master.get("background") or {}).get("promptEn") or "").strip().rstrip(".")
+        by_id = {item.get("id"): item for item in master.get("characters") or []}
+        looks = []
+        for cid in beat.get("characters") or []:
+            item = by_id.get(cid) or {}
+            handle = str(item.get("handleEn") or "the character").strip()
+            look = str(item.get("promptEn") or "").strip().rstrip(".")
+            if look:
+                looks.append(f"{handle}: {look}")
+        action = str(beat.get("actionEn") or "").strip().rstrip(".")
+        camera = str(beat.get("cameraEn") or "").strip().rstrip(".")
+        parts = []
+        if style:
+            parts.append(style + ".")
+        if bg:
+            parts.append(f"Setting: {bg}.")
+        if looks:
+            parts.append("; ".join(looks) + ".")
+        if action:
+            parts.append(action + ".")
+        if camera:
+            parts.append(camera + ".")
+        parts.append("16:9, no text, no speech bubbles.")
+        return " ".join(parts)
+
+    def _beat_preview_refs(owner: str, pid: str, master: dict, beat: dict) -> list[bytes]:
+        """미리보기 참고 이미지 = 배경 그림 + 그 비트 인물 사진(있는 것만, 읽기 실패는 건너뜀)."""
+        refs: list[bytes] = []
+        bg_key = (master.get("background") or {}).get("imageKey") or ""
+        if bg_key:
+            try:
+                refs.append(store.STORE.get_bytes(bg_key))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("vpoc.master.bg_ref_failed key=%s err=%s", bg_key, exc)
+        by_id = {item.get("id"): item for item in master.get("characters") or []}
+        for cid in beat.get("characters") or []:
+            key = (by_id.get(cid) or {}).get("imageKey") or ""
+            if not key:
+                continue
+            try:
+                refs.append(store.STORE.get_bytes(key))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("vpoc.master.char_ref_failed key=%s err=%s", key, exc)
+        return refs
+
+    def _draw_beat_preview(
+        owner: str, pid: str, plan_id: str, user: str, master: dict, keyframe: dict
+    ) -> dict:
+        """비트 미리보기 콘티 1장(Seedream Flash). 참고 = 배경 + 그 비트 인물 사진."""
+        beat = next(
+            (item for item in master.get("beats") or [] if item.get("id") == keyframe.get("beatId")),
+            {},
+        )
+        prompt = _beat_preview_prompt(master, beat)
+        refs = _beat_preview_refs(owner, pid, master, beat)
+        try:
+            jpeg = seedream.generate_safe(
+                prompt, refs or None, model=settings.SEEDREAM_ROUGH_MODEL, where="seedream.master_preview"
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "error": envelope("seedream.master_preview", exc)}
+        image_id = secrets.token_hex(4)
+        key = store.keyframe_key(owner, pid, plan_id, keyframe["id"], "rough", image_id)
+        store.STORE.put_bytes(key, jpeg, "image/jpeg")
+        ledger.charge_seedream(
+            f"master-prev-{plan_id}-{keyframe['id']}-{image_id}",
+            model=settings.SEEDREAM_ROUGH_MODEL, user=user, project_id=pid, plan_id=plan_id,
+        )
+        return {"status": "ready", "key": key, "imageId": image_id, "error": None}
+
+    def _build_master(
+        owner: str, pid: str, plan_id: str, user: str, step1: dict, step2: dict,
+        image_results: dict,
+    ) -> dict:
+        """do_prepare 의 single 경로: 마스터 데이터 + 배경 그림 + 미리보기 콘티.
+
+        image_results 는 인물 그림 준비 결과({char_id: {key, source, ...}})다 — 이미 끝난 뒤에 부른다.
+        배경 그림이 먼저 있어야 미리보기가 그 배경을 참고하므로 배경 → 미리보기 순서로 그린다.
+        돌려주는 dict 는 apply_result('prepare') 가 steps["3"] 에 넣는다(master + keyframes + shots=[]).
+        """
+        model = str(step2.get("videoModel") or "")
+        total = _single_total(step2, model)
+        style_en = compose.STYLE[compose.style_of((step2.get("story") or {}).get("style") or "")]
+        characters = step2.get("characters") or []
+        story = step2.get("story") or {}
+        story_text = " ".join(
+            str(story.get(field) or "") for field in ("titleKo", "loglineKo", "settingKo")
+        ).strip() or str(step1.get("text") or "")
+        steps_view = {"1": step1, "2": step2, "3": {}}
+        panels = _spread(_story_panels(steps_view, owner, pid), 12)
+        cache: dict = {}
+        panel_bytes = [images.panel_jpeg(owner, pid, f, i, cache) for f, i in panels]
+
+        plan, usage = llm.master_plan(
+            panel_bytes, characters, story_text=story_text, total_s=total,
+            min_beats=settings.SINGLE_MIN_KEYFRAMES, max_beats=settings.SINGLE_MAX_KEYFRAMES,
+        )
+        ledger.charge_text(
+            f"master-{plan_id}-{secrets.token_hex(3)}",
+            input_tokens=int(usage.get("inputTokens") or 0),
+            output_tokens=int(usage.get("outputTokens") or 0),
+            user=user, project_id=pid, plan_id=plan_id, model=str(usage.get("model") or ""),
+        )
+
+        # 비트 정규화: 2~4개, 시간 구간이 0~total 을 빈틈없이 덮게 한다(마지막 t1 = total).
+        known = {item.get("id") for item in characters}
+        handles = {
+            item.get("id"): item.get("handleEn") or item.get("nameEn") or item.get("id")
+            for item in characters
+        }
+        raw_beats = [b for b in (plan.get("beats") or []) if isinstance(b, dict)]
+        count = max(settings.SINGLE_MIN_KEYFRAMES, min(settings.SINGLE_MAX_KEYFRAMES, len(raw_beats) or settings.SINGLE_MIN_KEYFRAMES))
+        raw_beats = raw_beats[:count]
+        while len(raw_beats) < count:
+            raw_beats.append(dict(raw_beats[-1]) if raw_beats else {})
+        step = float(total) / count
+        beats = []
+        for index, beat in enumerate(raw_beats):
+            t0 = round(index * step, 2)
+            t1 = round((index + 1) * step, 2) if index < count - 1 else float(total)
+            cast = [cid for cid in (beat.get("characters") or []) if cid in known] or list(known)
+            beats.append(
+                {
+                    "id": f"b{index + 1}",
+                    "t0": t0,
+                    "t1": t1,
+                    "actionEn": str(beat.get("actionEn") or "")[:240],
+                    "cameraEn": str(beat.get("cameraEn") or "")[:80],
+                    "descKo": str(beat.get("descKo") or "")[:70],
+                    "characters": cast,
+                }
+            )
+
+        # 인물: promptEn 기본값 = ② appearanceEn, 없으면 master_plan 이 보강한 문장. imageKey = ③ 인물 그림.
+        plan_looks = {
+            str(item.get("id")): str(item.get("appearanceEn") or "").strip()
+            for item in (plan.get("characters") or [])
+            if isinstance(item, dict)
+        }
+        master_chars = []
+        for item in characters:
+            cid = item.get("id")
+            look = str(item.get("appearanceEn") or "").strip() or plan_looks.get(str(cid), "")
+            master_chars.append(
+                {
+                    "id": cid,
+                    "handleEn": str(item.get("handleEn") or item.get("nameEn") or "the character"),
+                    "promptEn": look[:200],
+                    "imageKey": (image_results.get(cid) or {}).get("key") or "",
+                }
+            )
+
+        master = {
+            "styleEn": style_en,
+            "background": {
+                "promptEn": str(plan.get("backgroundEn") or "")[:300],
+                "descKo": str(plan.get("backgroundKo") or "")[:120],
+                "imageKey": "",
+                "status": "drawing",
+                "error": None,
+            },
+            "characters": master_chars,
+            "beats": beats,
+            "totalS": total,
+            "version": 1,
+        }
+
+        # 배경 그림 먼저(미리보기가 참고로 쓴다).
+        bg = _draw_background(owner, pid, plan_id, user, master)
+        master["background"]["imageKey"] = bg.get("key") or ""
+        master["background"]["status"] = bg.get("status") or "failed"
+        master["background"]["error"] = bg.get("error")
+
+        # 미리보기 콘티 = 비트마다 1장(중간 시점). 기존 keyframes 배열을 재사용한다(각각 beatId 연결).
+        keyframes = []
+        for beat in beats:
+            keyframes.append(
+                {
+                    "id": "kf_" + beat["id"],
+                    "beatId": beat["id"],
+                    "t": _beat_mid_time(beat),
+                    "summaryKo": beat.get("descKo") or "",
+                    "characters": list(beat.get("characters") or []),
+                    "rough": {"status": "none"},
+                    "final": {"status": "none"},
+                    "stale": False,
+                }
+            )
+        results: dict = {}
+
+        def draw(item: dict) -> None:
+            results[item["id"]] = _draw_beat_preview(owner, pid, plan_id, user, master, item)
+
+        workers = [threading.Thread(target=draw, args=(item,), daemon=True) for item in keyframes]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=240)
+        for item in keyframes:
+            item["rough"] = results.get(item["id"]) or {"status": "error", "error": {"message": "시간 초과"}}
+
+        # shots 는 single 에서 쓰지 않지만, generate 의 샷 없음 검사(③ 샷 필요)를 통과하도록 비트당 1개를
+        # 둔다(영상 제출은 master_video_prompt 로만 한다 — 이 shots 의 promptEn 은 쓰지 않는다).
+        shots = [
+            {
+                "id": "seg_" + beat["id"],
+                "summaryKo": beat.get("descKo") or "",
+                "cameraKo": "",
+                "cameraEn": beat.get("cameraEn") or "",
+                "locationEn": "",
+                "actionEn": beat.get("actionEn") or "",
+                "characters": list(beat.get("characters") or []),
+                "useKeyframe": False,
+                "reviewKo": None,
+                "promptEn": beat.get("actionEn") or "-",
+                "durationS": round(float(beat["t1"]) - float(beat["t0"]), 2),
+                "beatId": beat["id"],
+            }
+            for beat in beats
+        ]
+        return {"master": master, "keyframes": keyframes, "shots": shots}
+
+    def _master_video_references(
+        state: dict, owner: str, pid: str
+    ) -> tuple[list[tuple[str, str]], str]:
+        """영상 제출용 참고: ([(handle, 인물 사진 키)] 등장 순서, 배경 그림 키).
+
+        설계자 2026-10-19: 인물 사진들(등장 순서) + 배경 그림을 참고 이미지로 쓴다. 키 장면 그림은
+        넣지 않는다. imageKey 가 없는 인물은 건너뛴다.
+        """
+        master = state["steps"]["3"].get("master") or {}
+        chars: list[tuple[str, str]] = []
+        for item in master.get("characters") or []:
+            key = str(item.get("imageKey") or "")
+            if key:
+                chars.append((str(item.get("handleEn") or "the character"), key))
+        bg_key = str((master.get("background") or {}).get("imageKey") or "")
+        return chars, bg_key
+
+    def _master_submit_inputs(
+        state: dict, owner: str, pid: str, video_model: str
+    ) -> tuple[str, str, list[str], str]:
+        """영상 1개(single) 제출 인자: (마스터 문장, 참고 이미지 설명 접두, 참고 이미지 b64 목록, 첫 이미지 b64).
+
+        마스터 문장 = compose.master_video_prompt(master) 그대로. 참고 이미지 설명("Image 1 is ...")은
+        따로 돌려주고, **참고 이미지를 실제로 보낼 때만** 호출부가 앞에 붙인다(설계자 2026-10-19 수정).
+        참고 이미지가 없는 경우(Luma 시작 이미지 · fal start-only · fal 텍스트→영상)에는 틀린 설명이
+        붙지 않도록 접두를 빼고 마스터 문장만 보낸다. 참고 이미지 = 인물 사진(등장 순서) + 배경 그림.
+        """
+        master = state["steps"]["3"].get("master") or {}
+        base_prompt = compose.master_video_prompt(master, max_chars=ark.MAX_PROMPT_CHARS)
+        chars, bg_key = _master_video_references(state, owner, pid)
+        labels = []
+        references: list[str] = []
+        index = 1
+        for handle, key in chars:
+            if len(references) >= MAX_REFERENCE_IMAGES:
+                break
+            try:
+                references.append(images.keyframe_base64(key))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("vpoc.master.ref_failed key=%s err=%s", key, exc)
+                continue
+            labels.append(f"Image {index} is {handle}")
+            index += 1
+        if bg_key and len(references) < MAX_REFERENCE_IMAGES:
+            try:
+                references.append(images.keyframe_base64(bg_key))
+                labels.append(f"Image {index} is the background setting")
+                index += 1
+            except Exception as exc:  # noqa: BLE001
+                log.warning("vpoc.master.bg_failed key=%s err=%s", bg_key, exc)
+        lead = ("; ".join(labels) + ". ") if labels else ""
+        # 시작 이미지(참고 이미지가 없는 모델용): 첫 비트 미리보기 그림.
+        first = ""
+        keyframes = state["steps"]["3"].get("keyframes") or []
+        if keyframes:
+            kf_key = (keyframes[0].get("final") or {}).get("key") or (keyframes[0].get("rough") or {}).get("key") or ""
+            if kf_key:
+                try:
+                    first = images.keyframe_base64(kf_key)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("vpoc.master.first_failed key=%s err=%s", kf_key, exc)
+        return base_prompt, lead, references, first
+
+    def _mark_master_stale(state: dict, *, background: bool = False, char_ids=None, beat_ids=None) -> None:
+        """수정이 들어오면 영향받는 미리보기를 stale 로 표시한다(설계자 2026-10-19).
+
+        배경 수정 → 배경 그림 + 전체 미리보기 stale. 인물 수정 → 그 인물이 나오는 비트. 비트 수정 → 그 비트.
+        """
+        master = state["steps"]["3"].get("master") or {}
+        char_ids = set(char_ids or [])
+        beat_ids = set(beat_ids or [])
+        if background:
+            master.setdefault("background", {})["status"] = "stale"
+        beats_by_id = {b.get("id"): b for b in master.get("beats") or []}
+        for kf in state["steps"]["3"].get("keyframes") or []:
+            beat_id = kf.get("beatId")
+            if beat_id is None:
+                continue
+            beat = beats_by_id.get(beat_id) or {}
+            hit = background or beat_id in beat_ids or (char_ids & set(beat.get("characters") or []))
+            if hit:
+                kf["stale"] = True
+
 
     # ---------------------------------------------------------------- 제출 · 조회
 
@@ -1303,8 +1911,21 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
             (item for item in state["steps"]["3"].get("shots", []) if item["id"] == shot["id"]),
             None,
         )
-        if shot["id"] == ark.ONE_TAKE_ID and state["steps"]["4"].get("oneTake"):
-            # A안: ③ 의 샷 전체를 시간대별 지시 하나로 합친 영상 1개.
+        if shot["id"] == ark.ONE_TAKE_ID and state["steps"]["4"].get("single"):
+            # 영상 1개(single, 설계자 2026-10-19): 마스터 프롬프트 하나로 만든다. plan_shot 은 길이·인물만
+            # 담는 껍데기이고, 실제 프롬프트·참고 이미지는 _master_submit_inputs 가 마스터에서 만든다.
+            master = state["steps"]["3"].get("master") or {}
+            if master:
+                plan_shot = {
+                    "id": ark.ONE_TAKE_ID,
+                    "characters": [c.get("id") for c in master.get("characters") or []],
+                    "promptEn": compose.master_video_prompt(master, max_chars=ark.MAX_PROMPT_CHARS),
+                    "durationS": int(master.get("totalS") or _single_total(state["steps"]["2"], str(state["steps"]["4"].get("videoModel") or ""))),
+                }
+            else:
+                plan_shot = None
+        elif shot["id"] == ark.ONE_TAKE_ID and state["steps"]["4"].get("oneTake"):
+            # A안(옛): ③ 의 샷 전체를 시간대별 지시 하나로 합친 영상 1개.
             plan_shot = _one_take(
                 state["steps"], str(state["steps"]["4"].get("videoModel") or "")
             )
@@ -1364,7 +1985,7 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                     raise VpocError(
                         "routes.submit_shot",
                         "BadDuration",
-                        f"{ark.LABELS.get(video_model, video_model)}는 한 번에 {low}~{high}초만 만들 수 있습니다"
+                        f"{ark.label(video_model)}는 한 번에 {low}~{high}초만 만들 수 있습니다"
                         f"(이 영상 {seconds}초). ③ 계획 승인에서 다시 승인해 주세요 — 길면 샷별로 나눠 만듭니다.",
                         400,
                     )
@@ -1376,42 +1997,74 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                 # 설계자 2026-10-13: 이 샷이 맡은 웹툰 장면(순서대로)과 그 장면을 Claude 가 읽은 설명
                 # (분위기 · 배경 · 인물별 행동 · 상황 · 움직임 순서)을 함께 보낸다 — generate 때 정해 둔다.
                 last_frame = ""
-                step4_now = state["steps"]["4"]
-                shot_panels = (step4_now.get("panels") or {}).get(shot["id"]) or []
-                shot_brief = (step4_now.get("briefs") or {}).get(shot["id"]) or ""
-                failed: set[str] = set()
-                encoded: dict[str, str] = {}
-                tile_cache: dict = {}
-                for _, key in _reference_bundle(
-                    state["steps"], owner, pid, plan_shot, prompt, panels=shot_panels, brief=shot_brief
-                )[1]:
-                    try:
-                        encoded[key] = _reference_b64(owner, pid, key, tile_cache)
-                    except Exception as exc:  # noqa: BLE001
-                        failed.add(key)
-                        log.warning("vpoc.reference.failed shot=%s key=%s err=%s", shot["id"], key, exc)
-                sent_prompt, entries = _reference_bundle(
-                    state["steps"],
-                    owner,
-                    pid,
-                    plan_shot,
-                    prompt,
-                    skip=frozenset(failed),
-                    panels=shot_panels,
-                    brief=shot_brief,
-                )
-                references = []
-                for _, key in entries:
-                    if key not in encoded:  # 앞 그림이 빠져 뒤 그림이 자리를 얻은 경우
-                        encoded[key] = _reference_b64(owner, pid, key, tile_cache)
-                    references.append(encoded[key])
-                if plan_shot.get("keyframes"):
-                    # 키 장면 방식: 완성 키 장면 a → b 를 시작 · 끝 장면으로(참고 이미지와 함께 못 쓴다).
-                    sent_prompt, keyframe, last_frame = _keyframe_inputs(state, plan_shot, prompt)
+                is_single = shot["id"] == ark.ONE_TAKE_ID and state["steps"]["4"].get("single")
+                if is_single:
+                    # 영상 1개(single, 설계자 2026-10-19): 마스터 프롬프트 + 인물 사진 + 배경 그림.
+                    # 키 장면 그림은 영상에 넣지 않는다. Seedance 와 referenceImagesField 가 있는 fal 은
+                    # 참고 이미지, startImageField 만 있는 fal(이미지→영상 전용)은 첫 비트 미리보기를
+                    # 시작 이미지로(끝 이미지 없음), 텍스트→영상 fal 은 이미지 없이.
+                    base_prompt, lead, references, first_master = _master_submit_inputs(
+                        state, owner, pid, video_model
+                    )
+                    use_reference = True
+                    start_only = False
+                    text_only = False
+                    if settings.is_fal(video_model):
+                        caps = (fal.find(video_model) or {}).get("caps") or {}
+                        use_reference = bool(caps.get("referenceImagesField"))
+                        start_only = not use_reference and bool(caps.get("startImageField"))
+                        text_only = not use_reference and not start_only
+                    if use_reference:
+                        # 참고 이미지를 실제로 보낼 때만 "Image N is ..." 설명을 앞에 붙인다.
+                        sent_prompt = (lead + base_prompt).strip()
+                        keyframe, last_frame = "", ""
+                        mode = "reference"
+                    elif start_only:
+                        # 참고 이미지 없음 → 틀린 "Image N" 설명을 붙이지 않는다(마스터 문장만).
+                        sent_prompt = base_prompt
+                        references, keyframe, last_frame = [], first_master, ""
+                        mode = "keyframe"
+                    else:  # text_only
+                        sent_prompt = base_prompt
+                        references, keyframe, last_frame = [], "", ""
+                        mode = "text"
+                else:
+                    step4_now = state["steps"]["4"]
+                    shot_panels = (step4_now.get("panels") or {}).get(shot["id"]) or []
+                    shot_brief = (step4_now.get("briefs") or {}).get(shot["id"]) or ""
+                    failed: set[str] = set()
+                    encoded: dict[str, str] = {}
+                    tile_cache: dict = {}
+                    for _, key in _reference_bundle(
+                        state["steps"], owner, pid, plan_shot, prompt, panels=shot_panels, brief=shot_brief
+                    )[1]:
+                        try:
+                            encoded[key] = _reference_b64(owner, pid, key, tile_cache)
+                        except Exception as exc:  # noqa: BLE001
+                            failed.add(key)
+                            log.warning("vpoc.reference.failed shot=%s key=%s err=%s", shot["id"], key, exc)
+                    sent_prompt, entries = _reference_bundle(
+                        state["steps"],
+                        owner,
+                        pid,
+                        plan_shot,
+                        prompt,
+                        skip=frozenset(failed),
+                        panels=shot_panels,
+                        brief=shot_brief,
+                    )
                     references = []
-                    mode = "keyframe"
-                if references:
-                    mode = "reference"
+                    for _, key in entries:
+                        if key not in encoded:  # 앞 그림이 빠져 뒤 그림이 자리를 얻은 경우
+                            encoded[key] = _reference_b64(owner, pid, key, tile_cache)
+                        references.append(encoded[key])
+                    if plan_shot.get("keyframes"):
+                        # 키 장면(옛 keyframes) 방식: 완성 키 장면 a → b 를 시작 · 끝 장면으로.
+                        sent_prompt, keyframe, last_frame = _keyframe_inputs(state, plan_shot, prompt)
+                        references = []
+                        mode = "keyframe"
+                    if references:
+                        mode = "reference"
                 job = ark.submit(
                     model=video_model,
                     owner=owner,
@@ -1428,13 +2081,25 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                     last_frame_jpeg_b64=last_frame,
                 )
             else:
+                single_prompt = prompt
+                if shot["id"] == ark.ONE_TAKE_ID and state["steps"]["4"].get("single"):
+                    # Luma Ray2: 마스터 프롬프트(참고 이미지 설명 없이) + 첫 비트 미리보기를 시작 이미지로
+                    # (설계자 2026-10-19). Luma 는 참고 이미지를 안 보내므로 "Image N" 접두를 붙이지 않는다.
+                    base_prompt, _lead, _refs, first_master = _master_submit_inputs(
+                        state, owner, pid, video_model
+                    )
+                    single_prompt = base_prompt
+                    keyframe = first_master
+                    sent_prompt = single_prompt
+                    if keyframe:
+                        mode = "keyframe"
                 job = video.submit(
                     owner=owner,
                     project_id=pid,
                     plan_id=plan_id,
                     shot_id=shot["id"],
                     attempt=attempt,
-                    prompt=prompt,
+                    prompt=single_prompt,
                     keyframe_jpeg_b64=keyframe,
                     gen_id=gen_id,
                     resolution=video_resolution,
@@ -1483,6 +2148,12 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                 "lastPolledAt": "",
             }
         )
+        # 영상 1개(single): 승인한 프롬프트 그대로 보냈음을 ④ 화면에서 확인할 수 있게 기록한다(설계자 2026-10-19).
+        is_single_record = shot["id"] == ark.ONE_TAKE_ID and state["steps"]["4"].get("single")
+        if is_single_record:
+            master = state["steps"]["3"].get("master") or {}
+            target["sentPromptEn"] = sent_prompt
+            target["masterVersion"] = int(master.get("version") or 1)
         # 샷별 작업 기록. 조회(GET)는 state.json 대신 이 파일만 써도 되는 감사 기록이다.
         store.STORE.write_json(
             store.job_key(owner, pid, plan_id, shot["id"], attempt, gen_id),
@@ -1505,6 +2176,13 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                 "durationS": seconds,
                 # Seedance 에 실제로 보낸 문장(참고 이미지 지시 포함). Luma 는 prompt 와 같다.
                 "sentPrompt": sent_prompt if use_ark else prompt,
+                # single 은 승인한 마스터 프롬프트 · 버전을 기록한다.
+                "sentPromptEn": sent_prompt if is_single_record else None,
+                "masterVersion": (
+                    int((state["steps"]["3"].get("master") or {}).get("version") or 1)
+                    if is_single_record
+                    else None
+                ),
             },
         )
 
@@ -1617,7 +2295,7 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
             else settings.MAX_INFLIGHT
         )
         briefing = str(state["steps"]["4"].get("briefing") or "")
-        wait_s = 1200 if state["steps"]["3"].get("makeMode") == "keyframes" else 300
+        wait_s = 1200 if state["steps"]["3"].get("makeMode") in ("keyframes", "single") else 300
         if briefing and _elapsed_s(briefing) < wait_s:
             # 장면 설명을 쓰는 중(generate 직후 1분 안팎). 다 쓰면 그 스레드가 제출한다.
             for _, target in all_targets():
@@ -2020,7 +2698,36 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
             state0, _ = store.load_state(owner, pid, plan_id)
         except Exception:  # noqa: BLE001
             state0 = None
+        if state0 and state0["steps"]["3"].get("makeMode") == "single":
+            # 영상 1개(single, 설계자 2026-10-19): 키 장면 그림을 완성하지 않는다(영상에 넣지 않는다).
+            # 승인 시 미리보기가 stale 여도 막지 않는다 — 단 배경 그림이 없으면 먼저 그린다.
+            master = state0["steps"]["3"].get("master") or {}
+            bg = master.get("background") or {}
+            drawn = None
+            if not bg.get("imageKey"):
+                drawn = _draw_background(owner, pid, plan_id, user, master)
+
+            def single_mutator(inner: dict):
+                imaster = inner["steps"]["3"].get("master") or {}
+                if drawn and drawn.get("status") == "ready":
+                    imaster.setdefault("background", {})
+                    imaster["background"]["imageKey"] = drawn.get("key") or ""
+                    imaster["background"]["status"] = "ready"
+                    imaster["background"]["error"] = None
+                step4 = inner["steps"]["4"]
+                step4.pop("briefing", None)
+                for item in step4.get("shots") or []:
+                    if item.get("note") == "웹툰 장면 설명 준비 중":
+                        item["note"] = None
+                refresh_shots(inner, owner, pid, plan_id, user)
+
+            try:
+                store.mutate_state(owner, pid, plan_id, single_mutator)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("vpoc.single.save_failed plan=%s err=%s", plan_id, exc)
+            return
         if state0 and state0["steps"]["3"].get("makeMode") == "keyframes":
+            # 옛 keyframes: 완성 키 장면을 먼저 그린 뒤 제출한다.
             finals = _finalize_keyframes(owner, pid, plan_id, user, state0)
 
             def kf_mutator(inner: dict):
@@ -2192,9 +2899,9 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
         by_id = {item.get("id"): item for item in step4.get("shots") or []}
         model = str(step4.get("videoModel") or steps["2"].get("videoModel") or ark.DEFAULT_MODEL)
         shots = []
-        take = by_id.get(ark.ONE_TAKE_ID) if step4.get("oneTake") else None
+        take = by_id.get(ark.ONE_TAKE_ID) if (step4.get("oneTake") or step4.get("single")) else None
         for shot in steps["3"].get("shots") or []:
-            # 한 번에 이어서 만든 계획은 샷들이 영상 하나를 같이 쓴다 — 그 영상의 상태를 따른다.
+            # 한 번에 만든(single·oneTake) 계획은 샷들이 영상 하나를 같이 쓴다 — 그 영상의 상태를 따른다.
             made = take or by_id.get(shot.get("id")) or {}
             shots.append(
                 {
@@ -2212,7 +2919,7 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                 except Exception:  # noqa: BLE001
                     url = None
                 if url:
-                    label = "한 번에 이어서 만든 영상" if item.get("id") == ark.ONE_TAKE_ID else item.get("id")
+                    label = "영상 1개" if item.get("id") == ark.ONE_TAKE_ID else item.get("id")
                     videos.append({"id": item.get("id"), "label": label, "videoUrl": url})
         current = int(state.get("currentStep") or 1)
         text = str((steps["1"] or {}).get("text") or "")
@@ -2225,6 +2932,7 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
             "step4Status": step4.get("status") or "empty",
             "videoModel": model,
             "oneTake": bool(step4.get("oneTake")),
+            "single": bool(step4.get("single")),
             "shots": shots,
             "totalSeconds": sum(item["durationS"] for item in shots),
             "videos": videos,
@@ -2364,7 +3072,14 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                 sort_keys=True,
             )
         return _json.dumps(
-            [step.get("shots"), step.get("useKeyframes"), step.get("resolution"), step.get("oneTake")],
+            [
+                step.get("shots"),
+                step.get("useKeyframes"),
+                step.get("resolution"),
+                step.get("oneTake"),
+                # 영상 1개(single): 마스터(프롬프트·배경·인물·비트·version)가 바뀌면 ④ 를 다시 만들어야 한다.
+                step.get("master"),
+            ],
             ensure_ascii=False,
             sort_keys=True,
         )
@@ -2442,20 +3157,35 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                         400,
                     )
                 step["shotCount"] = count
-            # 제작 방식(설계자 2026-10-14): shots = 샷별(기존) · keyframes = 키 장면(콘티) 5초 간격.
+            # 제작 방식: single = 영상 1개 한 번에(설계자 2026-10-19, 모델 고르기 켜진 배포의 기본·유일).
+            # keyframes · shots = 옛 계획 호환(설계자 2026-10-14/이전). 옛 값은 그대로 받아 그대로 돈다.
             if "makeMode" in body:
-                mode = str(body.get("makeMode") or "shots")
-                step["makeMode"] = "keyframes" if mode == "keyframes" else "shots"
+                mode = str(body.get("makeMode") or "")
+                step["makeMode"] = mode if mode in ("single", "keyframes", "shots") else "shots"
             if "totalSeconds" in body:
+                # single 은 고른 모델이 한 번에 만들 수 있는 범위(VIDEO_DURATION_RANGE · fal caps)로 검증한다.
+                # 옛 계획(keyframes/shots)은 20·30·40·60 선택지 그대로 둔다(데이터 영향 금지).
+                options = ark.video_options(model)
+                low = int(options.get("minDurationS") or settings.DURATION_S)
+                high = int(options.get("maxDurationS") or settings.DURATION_S)
+                legacy_mode = str(step.get("makeMode") or "") in ("keyframes", "shots")
                 try:
                     total = int(body.get("totalSeconds") or settings.KEYFRAME_TOTAL_DEFAULT)
                 except (TypeError, ValueError):
                     total = settings.KEYFRAME_TOTAL_DEFAULT
-                if total not in settings.KEYFRAME_TOTAL_CHOICES:
+                if legacy_mode:
+                    if total not in settings.KEYFRAME_TOTAL_CHOICES:
+                        raise VpocError(
+                            "routes.save_step",
+                            "BadTotalSeconds",
+                            f"영상 길이는 {', '.join(str(v) for v in settings.KEYFRAME_TOTAL_CHOICES)}초 중에서 골라 주세요.",
+                            400,
+                        )
+                elif not low <= total <= high:
                     raise VpocError(
                         "routes.save_step",
-                        "BadTotalSeconds",
-                        f"영상 길이는 {', '.join(str(v) for v in settings.KEYFRAME_TOTAL_CHOICES)}초 중에서 골라 주세요.",
+                        "BadDuration",
+                        f"{ark.label(model)}는 한 번에 {low}~{high}초만 만들 수 있습니다 (받은 값 {total}).",
                         400,
                     )
                 step["totalSeconds"] = total
@@ -2475,6 +3205,66 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                     )
                 step["videoModel"] = wanted
             return
+
+        # 영상 1개(single, 설계자 2026-10-19): 마스터 프롬프트 수정. 그림이 아니라 프롬프트가 기준이다.
+        # 받는 수정: master.background.promptEn|descKo, master.characters[i].promptEn,
+        # master.beats[i].actionEn|cameraEn|descKo. 수정이 들어오면 version += 1 하고 영향받는 미리보기를
+        # stale 로 표시한다(배경 → 전체, 인물 → 그 인물 비트, 비트 → 그 비트).
+        master = step.get("master")
+        master_in = body.get("master") if isinstance(body.get("master"), dict) else None
+        if master and master_in:
+            changed_master = False
+            stale_background = False
+            stale_char_ids: list[str] = []
+            stale_beat_ids: list[str] = []
+            bg_in = master_in.get("background") if isinstance(master_in.get("background"), dict) else None
+            if bg_in:
+                background = master.setdefault("background", {})
+                for field in ("promptEn", "descKo"):
+                    if field in bg_in and str(bg_in[field]) != str(background.get(field) or ""):
+                        background[field] = str(bg_in[field])[:300 if field == "promptEn" else 120]
+                        changed_master = True
+                        stale_background = True
+            char_edits = {
+                str(item.get("id")): item
+                for item in (master_in.get("characters") or [])
+                if isinstance(item, dict) and item.get("id")
+            }
+            for mchar in master.get("characters") or []:
+                incoming = char_edits.get(str(mchar.get("id")))
+                if incoming and "promptEn" in incoming and str(incoming["promptEn"]) != str(mchar.get("promptEn") or ""):
+                    mchar["promptEn"] = str(incoming["promptEn"])[:200]
+                    changed_master = True
+                    stale_char_ids.append(mchar.get("id"))
+            beat_edits = {
+                str(item.get("id")): item
+                for item in (master_in.get("beats") or [])
+                if isinstance(item, dict) and item.get("id")
+            }
+            for beat in master.get("beats") or []:
+                incoming = beat_edits.get(str(beat.get("id")))
+                if not incoming:
+                    continue
+                for field, limit in (("actionEn", 240), ("cameraEn", 80), ("descKo", 70)):
+                    if field in incoming and str(incoming[field]) != str(beat.get(field) or ""):
+                        beat[field] = str(incoming[field])[:limit]
+                        changed_master = True
+                        if beat.get("id") not in stale_beat_ids:
+                            stale_beat_ids.append(beat.get("id"))
+            if changed_master:
+                master["version"] = int(master.get("version") or 1) + 1
+                if stale_background:
+                    master.setdefault("background", {})["status"] = "stale"
+                beats_by_id = {b.get("id"): b for b in master.get("beats") or []}
+                char_set = set(stale_char_ids)
+                beat_set = set(stale_beat_ids)
+                for kf in step.get("keyframes") or []:
+                    beat_id = kf.get("beatId")
+                    if beat_id is None:
+                        continue
+                    beat = beats_by_id.get(beat_id) or {}
+                    if stale_background or beat_id in beat_set or (char_set & set(beat.get("characters") or [])):
+                        kf["stale"] = True
 
         keep = {str(item) for item in (body.get("keepShotIds") or [])}
         shots = step.get("shots") or []
@@ -2604,6 +3394,27 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
             )
             return jsonify({"ok": True, "task": "prepare"}), 202
 
+        if action == "redraw" and str(body.get("target") or "") == "background":
+            # 영상 1개(single, 설계자 2026-10-19): 배경 그림 다시 그리기. 현재 마스터 기준.
+            master0 = state["steps"]["3"].get("master")
+            if not master0:
+                raise VpocError("routes.run", "PreconditionFailed", "마스터가 없습니다.", 409)
+
+            def redraw_background() -> dict:
+                st, _ = store.load_state(owner, pid, plan_id)
+                master = st["steps"]["3"].get("master") or {}
+                drawn = _draw_background(owner, pid, plan_id, user, master)
+                bg = dict(master.get("background") or {})
+                if drawn.get("status") == "ready":
+                    bg.update({"imageKey": drawn.get("key") or "", "status": "ready", "error": None})
+                else:
+                    bg["status"] = "failed"
+                    bg["error"] = drawn.get("error")
+                return {"background": bg}
+
+            run_task("redraw", owner, pid, plan_id, redraw_background)
+            return jsonify({"ok": True, "task": "redraw"}), 202
+
         if action == "redraw" and body.get("keyframeId"):
             kf_id = str(body.get("keyframeId") or "")
             scene_edit = body.get("sceneEn")
@@ -2613,6 +3424,24 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
             if not target:
                 raise VpocError("routes.run", "NotFound", "키 장면을 찾을 수 없습니다.", 404)
             item = dict(target)
+            # 영상 1개(single): 그 비트 미리보기를 현재 마스터 기준으로 다시 그린다(설계자 2026-10-19).
+            if state["steps"]["3"].get("master"):
+                def redraw_preview() -> dict:
+                    st, _ = store.load_state(owner, pid, plan_id)
+                    master = st["steps"]["3"].get("master") or {}
+                    fresh = next(
+                        (k for k in st["steps"]["3"].get("keyframes") or [] if k.get("id") == kf_id),
+                        item,
+                    )
+                    result = _draw_beat_preview(owner, pid, plan_id, user, master, fresh)
+                    out = dict(fresh)
+                    out["rough"] = result
+                    out["final"] = {"status": "none"}
+                    out["stale"] = False
+                    return {"characters": [], "keyframes": [out]}
+
+                run_task("redraw", owner, pid, plan_id, redraw_preview)
+                return jsonify({"ok": True, "task": "redraw"}), 202
             if scene_edit is not None and str(scene_edit).strip():
                 item["sceneEn"] = str(scene_edit).strip()[:600]
             handles = {
@@ -2660,14 +3489,25 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
             video_model = ark.selected(state)
             # ③ 영상 설정(설계자 2026-10-07): 화질 하나, 샷마다 길이.
             video_resolution = _plan_resolution(step3, video_model)
-            seconds_by_shot = {shot["id"]: _shot_seconds(video_model, shot) for shot in shots}
-            expected = round(
-                sum(
-                    settings.shot_usd(video_model, video_resolution, seconds_by_shot[shot["id"]])
-                    for shot in shots
-                ),
-                2,
+            # 영상 1개(single, 설계자 2026-10-19)면 마스터 프롬프트 1개로 만든다. 길이는 master.totalS,
+            # 금액도 그 1개 기준이다. single 판정은 makeMode + 마스터 유무로 한다.
+            single_master = (
+                step3.get("master")
+                if _make_mode(state["steps"]["2"], video_model, step3) == "single"
+                else None
             )
+            seconds_by_shot = {shot["id"]: _shot_seconds(video_model, shot) for shot in shots}
+            if single_master:
+                single_total = int(single_master.get("totalS") or _single_total(state["steps"]["2"], video_model))
+                expected = round(settings.shot_usd(video_model, video_resolution, single_total), 2)
+            else:
+                expected = round(
+                    sum(
+                        settings.shot_usd(video_model, video_resolution, seconds_by_shot[shot["id"]])
+                        for shot in shots
+                    ),
+                    2,
+                )
             confirm = body.get("confirmUsd")
             if confirm is None or abs(float(confirm) - expected) > 0.005:
                 raise VpocError(
@@ -2676,8 +3516,12 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                     f"화면 금액({confirm})과 서버 계산({expected:.2f} USD)이 다릅니다. 새로고침해 주세요.",
                     409,
                 )
-            # A안: 조건이 맞으면 샷들을 영상 하나로 이어서 만든다(금액은 같은 초 합계라 그대로다).
-            one_take = _one_take(state["steps"], video_model)
+            # single 이면 take 하나(마스터), 아니면 A안(옛) _one_take(조건 맞으면). 둘 다 아니면 샷별.
+            if single_master:
+                take = {"id": ark.ONE_TAKE_ID, "durationS": single_total, "mode": "reference"}
+            else:
+                take = _one_take(state["steps"], video_model)
+            one_take = take
 
             def mutator(inner: dict):
                 # 생성 회차를 새로 만든다. 토큰·jobs 키·출력 접두사가 이 값으로 갈라지므로
@@ -2688,7 +3532,9 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                     # 이 회차가 쓰는 모델. 생성 중에 ② 를 바꿔도 진행 중인 샷은 이 값을 따른다.
                     "videoModel": video_model,
                     "resolution": video_resolution,
-                    "oneTake": bool(one_take),
+                    "oneTake": bool(one_take) and not single_master,
+                    # 영상 1개(single) 회차 표시. submit_shot 이 이 값으로 마스터 프롬프트 · 참고 이미지를 고른다.
+                    "single": bool(single_master),
                     "shots": [
                         {
                             "id": shot["id"],
@@ -3071,5 +3917,104 @@ def create_blueprint(deps: VpocDependencies) -> Blueprint:
                 "promptChars": record.get("promptChars"),
             }
         )
+
+    # ---------------------------------------------------------------- fal.ai 모델 (설계자 2026-10-18)
+    #
+    # ② 영상 모델에 fal 모델을 추가한다. MODEL_PICKER_ENABLED 가 꺼져 있으면 이 API 들도 404 다
+    # (고르기 자체가 없는 배포에서 fal 등록 경로만 열려 있을 이유가 없다).
+
+    def _require_picker(where: str) -> None:
+        if not settings.MODEL_PICKER_ENABLED:
+            raise VpocError(where, "NotFound", "영상 모델 고르기가 꺼져 있습니다.", 404)
+
+    def _require_fal_key(where: str) -> None:
+        if not settings.FAL_KEY:
+            raise VpocError(
+                where,
+                "FalKeyMissing",
+                "fal API 키가 설정되지 않았습니다. 관리자에게 FAL_KEY 설정을 요청해 주세요.",
+                409,
+            )
+
+    @bp.get("/fal/catalog")
+    @deps.require_auth
+    @enveloped("routes.fal_catalog")
+    def fal_catalog():
+        """fal 카탈로그 한 페이지. category 기본값은 image-to-video."""
+        _require_picker("routes.fal_catalog")
+        _require_fal_key("routes.fal_catalog")
+        category = str(request.args.get("category") or "image-to-video")
+        if category not in settings.FAL_BROWSE_CATEGORIES:
+            raise VpocError(
+                "routes.fal_catalog",
+                "BadCategory",
+                f"알 수 없는 카테고리입니다: {category}",
+                400,
+            )
+        page = fal.catalog(
+            category,
+            q=str(request.args.get("q") or ""),
+            cursor=str(request.args.get("cursor") or ""),
+        )
+        return jsonify(
+            {
+                "ok": True,
+                "category": category,
+                # 영상 단계에서 실제로 쓸 수 있는 카테고리인지(그 밖은 목록만 보이고 등록 불가).
+                "usable": category in settings.FAL_VIDEO_CATEGORIES,
+                "models": page["models"],
+                "nextCursor": page["nextCursor"],
+                "hasMore": page["hasMore"],
+            }
+        )
+
+    @bp.get("/fal/models")
+    @deps.require_auth
+    @enveloped("routes.fal_models")
+    def fal_models():
+        """등록된 fal 모델 목록 + available/reason."""
+        _require_picker("routes.fal_models")
+        models = []
+        for item in fal.registered():
+            model_id = str(item.get("id") or "")
+            reason = fal.unavailable_reason(model_id) if settings.FAL_KEY else "fal API 키 미설정"
+            models.append(
+                {
+                    "id": model_id,
+                    "endpointId": item.get("endpointId"),
+                    "label": item.get("label"),
+                    "category": item.get("category"),
+                    "description": item.get("description"),
+                    "thumbnailUrl": item.get("thumbnailUrl"),
+                    "addedBy": item.get("addedBy"),
+                    "addedAt": item.get("addedAt"),
+                    "available": not reason,
+                    "reason": reason,
+                }
+            )
+        return jsonify({"ok": True, "configured": bool(settings.FAL_KEY), "models": models})
+
+    @bp.post("/fal/models")
+    @deps.require_auth
+    @enveloped("routes.fal_register")
+    def fal_register():
+        """fal 모델 등록. body {endpointId}. 스키마를 받아 caps 를 만들고 목록에 더한다."""
+        _require_picker("routes.fal_register")
+        _require_fal_key("routes.fal_register")
+        payload = request.get_json(silent=True) or {}
+        endpoint = str(payload.get("endpointId") or "").strip()
+        if not endpoint:
+            raise VpocError("routes.fal_register", "BadEndpoint", "endpointId 가 필요합니다.", 400)
+        item = fal.register(endpoint, added_by=deps.current_username())
+        return jsonify({"ok": True, "model": item}), 201
+
+    @bp.delete("/fal/models/<path:endpoint_id>")
+    @deps.require_auth
+    @enveloped("routes.fal_unregister")
+    def fal_unregister(endpoint_id: str):
+        """등록 해제. 이미 그 모델을 고른 계획은 selected() 가 Luma 로 되돌린다(기존 동작)."""
+        _require_picker("routes.fal_unregister")
+        removed = fal.unregister(endpoint_id)
+        return jsonify({"ok": True, "removed": removed})
 
     return bp

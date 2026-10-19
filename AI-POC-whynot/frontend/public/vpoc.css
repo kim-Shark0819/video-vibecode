@@ -884,3 +884,278 @@
   color: #92400e;
   font-size: 13.5px;
 }
+
+
+/* --- vpoc-fal: ② "fal 에서 모델 가져오기" --- */
+
+/* 모델 라디오 라벨 뒤의 작은 회색 배지. */
+.vpoc-fal-tag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  color: #4b5563;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.vpoc-fal {
+  margin: 6px 0 12px;
+}
+
+.vpoc-fal-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 11px;
+  background: #f8fbff;
+}
+
+.vpoc-fal-search {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.vpoc-fal-search .vpoc-input {
+  flex: 1 1 auto;
+}
+
+.vpoc-fal-list {
+  display: grid;
+  gap: 8px;
+}
+
+.vpoc-fal-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.vpoc-fal-thumb {
+  flex: 0 0 56px;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 7px;
+  background: #f3f4f6;
+}
+
+.vpoc-fal-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.vpoc-fal-name {
+  margin: 0;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.vpoc-fal-eid {
+  margin: 0;
+  color: var(--text-muted, #6b7280);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  word-break: break-all;
+}
+
+.vpoc-fal-desc {
+  margin: 2px 0 0;
+  color: var(--text-muted, #4b5563);
+  font-size: 13px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.vpoc-fal-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.vpoc-fal-registered {
+  color: #166534;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.vpoc-fal-blocked {
+  color: #9ca3af;
+  font-size: 12.5px;
+}
+
+.vpoc-fal-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted, #4b5563);
+  font-size: 13.5px;
+}
+
+/* 영상 모델 라디오 목록 위의 "모델 목록 갱신 중…" (작은 회색 글씨 + 스피너). */
+.vpoc-fal-reloading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 6px;
+  color: var(--text-muted, #6b7280);
+  font-size: 12.5px;
+}
+
+/* 진행 중 버튼 — 스피너 + 문구. 비활성 상태로만 쓴다. */
+.vpoc-fal-busy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 항목별 실패 사유 — 카드 아래 빨간 글씨. */
+.vpoc-fal-item-error {
+  margin: 6px 0 0;
+  color: #b91c1c;
+  font-size: 12.5px;
+  word-break: break-word;
+}
+
+/* 추가/해제 성공 안내(2초). 추가는 초록, 해제는 회색. */
+.vpoc-fal-hint {
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 13px;
+}
+
+.vpoc-fal-hint-add {
+  background: #ecfdf5;
+  color: #166534;
+}
+
+
+/* --- 영상 1개(single) 카드 (설계자 2026-10-19) --- */
+/* ④ 영상 1개는 샷 목록 대신 한 장의 큰 카드로 보인다(진행 · 경과 · 플레이어 · 다시 만들기).
+   기존 .vpoc-shot 레이아웃을 쓰되 번호를 숨기고 가로폭을 꽉 채운다. */
+.vpoc-shot.vpoc-single-card {
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 12px;
+  background: #fcfcfd;
+  padding: 14px;
+}
+
+.vpoc-shot.vpoc-single-card .vpoc-shot-no {
+  display: none;
+}
+
+.vpoc-shot.vpoc-single-card .vpoc-shot-body {
+  width: 100%;
+}
+
+.vpoc-shot.vpoc-single-card video {
+  width: 100%;
+  border-radius: 10px;
+}
+
+
+/* --- 영상 1개(single) ③ 계획 화면 (설계자 2026-10-19) --- */
+/* ③ = 영상 프롬프트 + 고정 인물 + 고정 배경 + 미리보기 콘티. 영상 하나 = 프롬프트 하나다. */
+
+/* 맨 위 "영상 프롬프트" 상자 — 읽기 전용, 기본 접힘(3줄). */
+.vpoc-master-prompt {
+  border: 1px solid var(--accent, #2563eb);
+  border-radius: 11px;
+  background: #f8fbff;
+  padding: 10px 12px;
+}
+
+.vpoc-master-prompt > summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--accent, #1d4ed8);
+}
+
+.vpoc-master-prompt-text {
+  margin-top: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+}
+
+/* 배경 (고정) 카드. */
+.vpoc-single-bg {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 11px;
+  background: #fcfcfd;
+  max-width: 520px;
+}
+
+.vpoc-single-bg-img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #f3f4f6;
+}
+
+/* "그리는 중…" 자리표시 — 스피너 + 문구 가로 배치. */
+.vpoc-single-bg-ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* 수정됨 배지 — 다시 그리기 권장. */
+.vpoc-badge-stale {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+/* 장면 (시간 순서) 비트 행. */
+.vpoc-shot.vpoc-single-beat .vpoc-shot-no {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 56px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
+
+.vpoc-single-beat-frame img {
+  width: 100%;
+  max-width: 280px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #f3f4f6;
+}
+
+.vpoc-single-beat-frame .vpoc-imageph {
+  max-width: 280px;
+}
+
+/* 승인 버튼 위 "영상 길이 N초 · 모델 X" 요약. */
+.vpoc-single-summary {
+  margin: 14px 0 0;
+  font-weight: 600;
+  color: var(--text, #1b1d21);
+}

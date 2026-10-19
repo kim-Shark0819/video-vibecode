@@ -18,6 +18,7 @@ import urllib.error
 import urllib.request
 
 from . import settings
+from . import fal
 from .errors import VpocError, now_iso
 from .store import STORE, video_output_prefix
 
@@ -46,19 +47,31 @@ _STATUS = {
 
 
 def is_ark(model: str) -> bool:
-    return model in settings.ARK_MODEL_IDS
+    # fal 모델(등록된 것)도 Seedance 와 같은 외부 공급자 경로를 탄다(설계자 2026-10-18).
+    return model in settings.ARK_MODEL_IDS or (settings.is_fal(model) and fal.is_registered(model))
 
 
 def is_ark_job(invocation_arn: str) -> bool:
-    return str(invocation_arn or "").startswith(ARN_PREFIX)
+    # 기존 Seedance(`ark/tasks/`) 또는 fal 작업(`fal/requests/`).
+    return str(invocation_arn or "").startswith(ARN_PREFIX) or fal.is_fal_job(invocation_arn)
 
 
 def model_id(model: str) -> str:
     return str(settings.ARK_MODEL_IDS.get(model) or "").strip()
 
 
+def label(model: str) -> str:
+    """화면에 보일 이름. fal 은 등록 label(`fal · <display_name>`), 나머지는 LABELS."""
+    if settings.is_fal(model):
+        item = fal.find(model)
+        return ("fal · " + str(item.get("label"))) if item else model
+    return LABELS.get(model, model)
+
+
 def unavailable_reason(model: str) -> str:
     """고를 수 없으면 그 이유(화면에 그대로 보인다). 고를 수 있으면 빈 문자열."""
+    if settings.is_fal(model):
+        return fal.unavailable_reason(model)
     if not model_id(model):
         return "모델 ID 미설정"
     if not settings.ARK_API_KEY:
@@ -70,7 +83,20 @@ DEFAULT_MODEL = "luma-ray2"
 
 
 def choices() -> list[dict]:
-    """② 화면의 모델 목록. 고를 수 없는 모델도 이유와 함께 보인다."""
+    """② 화면의 모델 목록. 고를 수 없는 모델도 이유와 함께 보인다.
+
+    설계자 2026-10-19: 영상 1개(single)의 '영상 길이' 선택지를 즉시 바꿀 수 있게 모델마다
+    durationChoices · minDurationS · maxDurationS 를 함께 준다(화면이 모델을 바꾸면 그 범위로 다시 그린다).
+    """
+    def _dur(model_id_value: str) -> dict:
+        opts = video_options(model_id_value)
+        return {
+            "durationChoices": opts.get("durationChoices") or [],
+            "minDurationS": opts.get("minDurationS"),
+            "maxDurationS": opts.get("maxDurationS"),
+            "durationFixed": opts.get("durationFixed"),
+        }
+
     luma_usd = settings.shot_usd(DEFAULT_MODEL)
     items = [
         {
@@ -80,18 +106,41 @@ def choices() -> list[dict]:
             "reason": "",
             "perShotUsd": luma_usd,
             "priceKnown": True,
+            "provider": "bedrock",
+            **_dur(DEFAULT_MODEL),
         }
     ]
-    for key, label in LABELS.items():
+    for key, label_text in LABELS.items():
         reason = unavailable_reason(key)
         items.append(
             {
                 "id": key,
-                "label": label,
+                "label": label_text,
                 "available": not reason,
                 "reason": reason,
                 "perShotUsd": settings.shot_usd(key),
                 "priceKnown": settings.ark_usd_per_sec(key) is not None,
+                "provider": "byteplus",
+                **_dur(key),
+            }
+        )
+    # 등록된 fal 영상 모델(text-to-video · image-to-video)을 Seedance 뒤에 더한다(설계자 2026-10-18).
+    # fal 은 단가를 모르므로 금액 0 · priceKnown False.
+    for item in fal.registered():
+        if str(item.get("category")) not in settings.FAL_VIDEO_CATEGORIES:
+            continue
+        model = str(item.get("id") or "")
+        reason = unavailable_reason(model)
+        items.append(
+            {
+                "id": model,
+                "label": "fal · " + str(item.get("label") or item.get("endpointId") or model),
+                "available": not reason,
+                "reason": reason,
+                "perShotUsd": 0,
+                "priceKnown": False,
+                "provider": "fal",
+                **_dur(model),
             }
         )
     return items
@@ -108,7 +157,30 @@ def selected(state: dict) -> str:
 
 
 def video_options(model: str) -> dict:
-    """③ 영상 설정에서 고를 수 있는 화질 · 샷 길이(초)."""
+    """③ 영상 설정에서 고를 수 있는 화질 · 샷 길이(초).
+
+    설계자 2026-10-19: 영상 1개(single)의 '영상 길이' 선택지를 durationChoices 로 함께 준다.
+    fal 처럼 정해진 값 목록이면 그 값들, 연속 범위(Seedance)면 최소~최대 정수 초.
+    """
+    if settings.is_fal(model):
+        # fal 은 caps 의 durations 최소/최대 · resolutions(없으면 ["720p"]) 를 쓴다.
+        item = fal.find(model) or {}
+        caps = item.get("caps") or {}
+        durations = sorted({int(value) for value in (caps.get("durations") or [5])})
+        low, high = durations[0], durations[-1]
+        resolutions = [str(value) for value in (caps.get("resolutions") or [])] or ["720p"]
+        return {
+            "model": model,
+            "resolutions": resolutions,
+            "defaultResolution": resolutions[0],
+            "minDurationS": low,
+            "maxDurationS": high,
+            "durationFixed": low == high,
+            # fal 은 정해진 값 목록 그대로 선택지로 준다.
+            "durationChoices": durations,
+            # 참고 이미지(캐릭터)를 보낼 수 있으면 True — referenceImagesField 또는 startImageField.
+            "referenceImages": bool(caps.get("referenceImagesField") or caps.get("startImageField")),
+        }
     low, high = settings.VIDEO_DURATION_RANGE.get(model, (settings.DURATION_S, settings.DURATION_S))
     return {
         "model": model,
@@ -117,6 +189,8 @@ def video_options(model: str) -> dict:
         "minDurationS": low,
         "maxDurationS": high,
         "durationFixed": low == high,
+        # 연속 범위는 최소~최대 정수 초를 선택지로 준다.
+        "durationChoices": list(range(int(low), int(high) + 1)),
         # Seedance 는 샷의 캐릭터 이미지를 참고 이미지로 함께 보낸다(캐릭터 그대로 유지).
         "referenceImages": is_ark(model),
     }
@@ -218,6 +292,46 @@ def one_take_prompt(beats: list[tuple[int, str]], style_sentence: str = "") -> s
     return " ".join(parts)
 
 
+def single_take_prompt(beats: list[tuple[float, float, str]], style_sentence: str = "") -> str:
+    """영상 1개 한 번에(single, 설계자 2026-10-19): ③ 키 장면/구간 문장을 시간 순서 하나로 합친다.
+
+    beats = [(시작 초, 끝 초, 구간 움직임/장면 문장)] (③ 순서). one_take_prompt 와 같은 모양이되
+    구간이 키 장면 사이 간격(실수)이라 시작·끝 초를 그대로 표기한다. 캐릭터 유지·참고 이미지 순서
+    지시는 reference_prompt() · keyframe_order_prefix() 가 앞에 붙인다.
+    """
+    parts = []
+    if style_sentence:
+        parts.append(style_sentence.strip().rstrip(".") + ".")
+    parts.append(
+        "One continuous video in a single take. Move smoothly from each beat to the next with no jump "
+        "cuts, keeping the same location, lighting, time of day, wardrobe and characters throughout."
+    )
+    for index, (start, end, text) in enumerate(beats, start=1):
+        a = int(round(start))
+        b = int(round(end))
+        parts.append(f"Beat {index} ({a}-{b}s): {str(text).strip()}")
+    return " ".join(parts)
+
+
+def keyframe_order_prefix(times: list[float]) -> str:
+    """완성 키 장면을 참고 이미지로 보낼 때(Seedance · fal reference), 어느 이미지가 몇 초 장면인지
+    앞에 못박는다(설계자 2026-10-19). reference_prompt 의 "Image N" 과 같은 순서다.
+
+    times = 키 장면의 초(③ 순서). 참고 이미지 맨 앞 len(times) 장이 이 키 장면들이라고 알린다.
+    """
+    if not times:
+        return ""
+    labels = []
+    for index, seconds in enumerate(times, start=1):
+        labels.append(f"Image {index} = the {int(round(seconds))}s scene")
+    return (
+        "The first reference images are keyframes of this one video in time order ("
+        + ", ".join(labels)
+        + "). Animate one continuous video that passes through these scenes in that order."
+    )
+
+
+
 def _call(method: str, path: str, payload: dict | None = None) -> dict:
     request = urllib.request.Request(
         settings.ARK_BASE_URL + path,
@@ -262,9 +376,27 @@ def submit(
     `prompt` 는 reference_prompt() 로 "Image N = 누구" 지시를 붙인 최종 문장이어야 한다 — 순서가
     이미지 순서와 같아야 BytePlus 가 누가 누구인지 안다.
     """
+    if settings.is_fal(model):
+        # fal 모델은 fal.submit 으로 넘긴다(같은 반환 키 모양). 끝 프레임이 없는 모델은 첫 프레임만,
+        # 이미지 입력이 전혀 없는 text-to-video 모델은 prompt 만 보내는 것은 fal.submit 이 caps 로 정한다.
+        return fal.submit(
+            model=model,
+            owner=owner,
+            project_id=project_id,
+            plan_id=plan_id,
+            shot_id=shot_id,
+            attempt=attempt,
+            prompt=prompt,
+            keyframe_jpeg_b64=keyframe_jpeg_b64,
+            gen_id=gen_id,
+            reference_jpegs_b64=reference_jpegs_b64,
+            resolution=resolution,
+            duration_s=duration_s,
+            last_frame_jpeg_b64=last_frame_jpeg_b64,
+        )
     reason = unavailable_reason(model)
     if reason:
-        raise VpocError("ark.submit", "ModelUnavailable", f"{LABELS.get(model, model)}: {reason}", 400)
+        raise VpocError("ark.submit", "ModelUnavailable", f"{label(model)}: {reason}", 400)
     if not prompt.strip():
         raise VpocError("ark.submit", "EmptyPrompt", "프롬프트가 비어 있습니다.", 400)
     if len(prompt) > MAX_PROMPT_CHARS:
@@ -339,6 +471,9 @@ def submit(
 
 def poll(invocation_arn: str, output_prefix: str) -> dict:
     """작업 상태. 완료면 결과 영상을 우리 버킷 `{prefix}/{taskId}/output.mp4` 로 옮긴 뒤 Completed."""
+    if fal.is_fal_job(invocation_arn):
+        # fal 작업은 fal.poll 로 넘긴다(같은 반환 키 모양: status · failureMessage · usage).
+        return fal.poll(invocation_arn, output_prefix)
     task_id = invocation_arn[len(ARN_PREFIX):]
     result = _call("GET", f"/contents/generations/tasks/{task_id}")
     raw_status = str(result.get("status") or "")

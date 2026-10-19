@@ -1,6 +1,6 @@
 # 와이낫 웹툰 → 영상 AI — 코드 구조
 
-기준: 2026-10-15 · 운영 배포본과 같은 커밋 (통합계정 GitLab awstech/ai main `56f9c57`, 이미지 `ci-56f9c578`).
+기준: 2026-10-19 · 운영 배포본과 같은 커밋 (통합계정 GitLab awstech/ai main `fceb363`, 이미지 `ci-fceb3634`).
 
 ## 화면 흐름과 코드
 
@@ -9,7 +9,7 @@
 | ① 원작 입력 | `frontend/public/vpoc.js` | `vpoc/routes.py` → `vpoc/llm.py`, `vpoc/images.py` | Claude (Bedrock) |
 | ② 확인 · 설정 | 〃 | `vpoc/routes.py`, `vpoc/compose.py` | Claude |
 | ③ 계획 승인 | 〃 | `vpoc/seedream.py`, `vpoc/images.py` | Seedream 5.0 (BytePlus), SD3.5 (Bedrock) |
-| ④ 영상 | 〃 | `vpoc/ark.py`, `vpoc/video.py`, `vpoc/regen.py`, `stitcher.py` | Seedance 2.0/2.5 (BytePlus), Luma Ray2 (Bedrock) |
+| ④ 영상 | 〃 | `vpoc/ark.py`, `vpoc/fal.py`, `vpoc/video.py`, `vpoc/regen.py`, `stitcher.py` | Seedance 2.0/2.5 (BytePlus), fal.ai 모델(Kling·Veo·Hailuo 등), Luma Ray2 (Bedrock) |
 
 ## 압축본에서 뺀 것
 
@@ -41,6 +41,7 @@ AI-POC-whynot/
 │   │   │   ├── ark.py  # BytePlus Seedance 제출/조회 · 첫/끝 프레임 · 소리
 │   │   │   ├── compose.py  # 영어 프롬프트 · 화풍 · 안전 문구 (모델 호출 없음)
 │   │   │   ├── errors.py  # 오류 봉투 · 사용자에게 보일 오류 종류
+│   │   │   ├── fal.py  # fal.ai 모델 카탈로그 · 등록 · 스키마 해석 · 큐 제출/조회
 │   │   │   ├── images.py  # 업로드 정규화 · 분석 타일 · SD3.5 인물 그림
 │   │   │   ├── ledger.py  # 비용 원장 (관리자 화면 집계)
 │   │   │   ├── llm.py  # Claude 분석 · 콘티 · 장면 설명 · 모델 자동 대체 · 교차 계정 역할

@@ -547,75 +547,533 @@
 
     /* 영상 모델 (dev 만 — 서버가 modelPicker 를 켜 둔 배포에서만 보인다) */
     if (plan.modelPicker && (plan.videoModels || []).length) {
-      var modelBlock = el("div", "vpoc-field");
-      modelBlock.appendChild(el("label", null, "영상 모델"));
-      var modelRow = el("div", "vpoc-radios");
-      var currentModel = step.videoModel || plan.videoModel || "luma-ray2";
-      plan.videoModels.forEach(function (item) {
-        var label = el("label", "vpoc-radio");
-        var radio = el("input");
-        radio.type = "radio";
-        radio.name = "vpoc-video-model";
-        radio.value = item.id;
-        radio.checked = currentModel === item.id;
-        radio.disabled = !editable || !item.available;
-        radio.addEventListener("change", function () {
-          if (radio.checked) edits.videoModel = item.id;
-        });
-        label.appendChild(radio);
-        var text = item.label;
-        if (!item.available) text += " (" + item.reason + ")";
-        label.appendChild(el("span", null, text));
-        modelRow.appendChild(label);
-      });
-      modelBlock.appendChild(modelRow);
-      section.appendChild(modelBlock);
+      // 모델 라디오·제작 방식·fal 패널을 한 컨테이너에 담아, fal 등록/해제 뒤에는
+      // 이 컨테이너만 다시 그린다(전체 refresh 를 하면 edits 가 날아간다).
+      var modelWrap = el("div");
+      section.appendChild(modelWrap);
+      drawModelPicker();
 
-      /* 제작 방식(설계자 2026-10-14). 키 장면 = 5초마다 러프 콘티 → 완성 그림 → 그 사이를 Seedance 로 잇는다. */
-      var modeBlock = el("div", "vpoc-field");
-      modeBlock.appendChild(el("label", null, "제작 방식 (Seedance)"));
-      var modeRow = el("div", "vpoc-radios");
-      // 설계자 2026-10-14: Seedance 면 키 장면(러프 콘티) 방식이 기본이다. 저장된 값이 있으면 그것.
-      var currentMode = step.makeMode || (String(currentModel).indexOf("seedance") === 0 ? "keyframes" : "shots");
-      edits.makeMode = edits.makeMode || currentMode;
-      [["shots", "샷별로 만들기 (기존)"], ["keyframes", "키 장면(콘티)으로 만들기 — 5초마다 러프 → 완성 그림 → 이어서 영상"]].forEach(function (pair) {
-        var label = el("label", "vpoc-radio");
-        var radio = el("input");
-        radio.type = "radio";
-        radio.name = "vpoc-make-mode";
-        radio.checked = currentMode === pair[0];
-        radio.disabled = !editable;
-        radio.addEventListener("change", function () {
-          if (radio.checked) edits.makeMode = pair[0];
+      // 현재 고른 모델 id. drawModelPicker 안에서 다시 계산한다.
+      function currentModelId() {
+        if (edits.videoModel) return edits.videoModel;
+        return step.videoModel || plan.videoModel || "luma-ray2";
+      }
+
+      // 키 장면(콘티) 방식이 기본인 모델인지 — Seedance 또는 fal 모델.
+      function keyframeDefault(modelId) {
+        var id = String(modelId);
+        return id.indexOf("seedance") === 0 || id.indexOf("fal:") === 0;
+      }
+
+      function drawModelPicker() {
+        clear(modelWrap);
+        var currentModel = currentModelId();
+
+        var modelBlock = el("div", "vpoc-field");
+        modelBlock.appendChild(el("label", null, "영상 모델"));
+        // 추가/해제 성공 후 라디오 목록을 다시 받는 동안 위에 작은 회색 안내.
+        if (falUi.reloading) {
+          var reloadRow = el("div", "vpoc-fal-reloading");
+          reloadRow.appendChild(el("div", "vpoc-spinner"));
+          reloadRow.appendChild(el("span", null, "모델 목록 갱신 중\u2026"));
+          modelBlock.appendChild(reloadRow);
+        }
+        var modelRow = el("div", "vpoc-radios");
+        (plan.videoModels || []).forEach(function (item) {
+          var label = el("label", "vpoc-radio");
+          var radio = el("input");
+          radio.type = "radio";
+          radio.name = "vpoc-video-model";
+          radio.value = item.id;
+          radio.checked = currentModel === item.id;
+          radio.disabled = !editable || !item.available;
+          radio.addEventListener("change", function () {
+            if (radio.checked) {
+              edits.videoModel = item.id;
+              // 제작 방식 기본값이 모델에 따라 달라지므로 블록을 다시 그린다.
+              drawModelPicker();
+            }
+          });
+          label.appendChild(radio);
+          // 서버 label 은 fal 모델일 때 "fal · <이름>" 이다. 배지를 따로 붙이므로 접두어는 뗀다.
+          var labelText = item.label;
+          if (item.provider === "fal" && labelText.indexOf("fal \u00b7 ") === 0) {
+            labelText = labelText.slice(6);
+          }
+          label.appendChild(el("span", null, labelText));
+          // fal 모델이면 이름 뒤에 작은 회색 배지.
+          if (item.provider === "fal") label.appendChild(el("span", "vpoc-fal-tag", "fal"));
+          if (!item.available) label.appendChild(el("span", null, " (" + item.reason + ")"));
+          modelRow.appendChild(label);
         });
-        label.appendChild(radio);
-        label.appendChild(el("span", null, pair[1]));
-        modeRow.appendChild(label);
-      });
-      modeBlock.appendChild(modeRow);
-      var totalRow = el("div", "vpoc-radios");
-      totalRow.appendChild(el("span", "vpoc-hint", "키 장면 방식 영상 길이"));
-      var currentTotal = Number(step.totalSeconds || 30);
-      edits.totalSeconds = edits.totalSeconds || currentTotal;
-      [20, 30, 40, 60].forEach(function (value) {
-        var label = el("label", "vpoc-radio");
-        var radio = el("input");
-        radio.type = "radio";
-        radio.name = "vpoc-total-seconds";
-        radio.checked = currentTotal === value;
-        radio.disabled = !editable;
-        radio.addEventListener("change", function () {
-          if (radio.checked) edits.totalSeconds = value;
+        modelBlock.appendChild(modelRow);
+        modelWrap.appendChild(modelBlock);
+
+        // "fal 에서 모델 가져오기" — 편집 권한이 있을 때만.
+        if (editable) modelWrap.appendChild(falSection());
+
+        /* 영상 길이(설계자 2026-10-19). 영상 1개(single)를 한 번에 만든다 — 제작 방식 선택·
+           20·30·40·60 고정 선택지는 없앴다. 고른 모델이 한 번에 만들 수 있는 범위로 길이를 고른다. */
+        // 옛 계획(makeMode=shots/keyframes)은 옛 동작을 읽기 전용으로 보여 준다(데이터 영향 금지).
+        var savedMode = step.makeMode || "";
+        var isLegacy = savedMode === "shots" || savedMode === "keyframes";
+        if (isLegacy) {
+          var legacyBlock = el("div", "vpoc-field");
+          legacyBlock.appendChild(el("label", null, "제작 방식"));
+          legacyBlock.appendChild(
+            el(
+              "p",
+              "vpoc-hint",
+              savedMode === "keyframes"
+                ? "이 계획은 예전 '키 장면(콘티)' 방식으로 만들어졌습니다. 그대로 이어서 진행합니다."
+                : "이 계획은 예전 '샷별' 방식으로 만들어졌습니다. 그대로 이어서 진행합니다."
+            )
+          );
+          if (savedMode === "keyframes") {
+            var legacyRow = el("div", "vpoc-radios");
+            legacyRow.appendChild(el("span", "vpoc-hint", "영상 길이"));
+            var legacyTotal = Number(step.totalSeconds || 30);
+            edits.totalSeconds = edits.totalSeconds || legacyTotal;
+            [20, 30, 40, 60].forEach(function (value) {
+              var ll = el("label", "vpoc-radio");
+              var lr = el("input");
+              lr.type = "radio";
+              lr.name = "vpoc-total-seconds";
+              lr.checked = legacyTotal === value;
+              lr.disabled = !editable;
+              lr.addEventListener("change", function () {
+                if (lr.checked) edits.totalSeconds = value;
+              });
+              ll.appendChild(lr);
+              ll.appendChild(el("span", null, value + "초 (키 장면 " + (value / 5 + 1) + "장)"));
+              legacyRow.appendChild(ll);
+            });
+            legacyBlock.appendChild(legacyRow);
+          }
+          modelWrap.appendChild(legacyBlock);
+        } else {
+          // 영상 1개(single): '영상 길이' 하나만 고른다. 선택지는 고른 모델의 durationChoices.
+          edits.makeMode = "single";
+          var lenBlock = el("div", "vpoc-field");
+          lenBlock.appendChild(el("label", null, "영상 길이"));
+          var modelItem = (plan.videoModels || []).filter(function (it) {
+            return it.id === currentModel;
+          })[0] || {};
+          var choices = (modelItem.durationChoices && modelItem.durationChoices.length)
+            ? modelItem.durationChoices
+            : (plan.videoOptions || {}).durationChoices || [5];
+          var lo = choices[0];
+          var hi = choices[choices.length - 1];
+          // 기본값 = min(10, 최대). 저장된 값이 범위 밖이면(모델을 바꾼 경우) 기본값으로.
+          var defaultLen = Math.min(10, hi);
+          if (defaultLen < lo) defaultLen = lo;
+          var currentLen = Number(edits.totalSeconds || step.totalSeconds || 0);
+          if (choices.indexOf(currentLen) < 0) currentLen = defaultLen;
+          edits.totalSeconds = currentLen;
+          var lenRow = el("div", "vpoc-radios");
+          choices.forEach(function (value) {
+            var ll = el("label", "vpoc-radio");
+            var lr = el("input");
+            lr.type = "radio";
+            lr.name = "vpoc-total-seconds";
+            lr.value = String(value);
+            lr.checked = currentLen === value;
+            lr.disabled = !editable;
+            lr.addEventListener("change", function () {
+              if (lr.checked) edits.totalSeconds = value;
+            });
+            ll.appendChild(lr);
+            ll.appendChild(el("span", null, value + "초"));
+            lenRow.appendChild(ll);
+          });
+          lenBlock.appendChild(lenRow);
+          lenBlock.appendChild(
+            el(
+              "p",
+              "vpoc-hint",
+              "고른 모델이 한 번에 만들 수 있는 길이입니다. 영상 1개를 한 번에 만듭니다 — ③에서 키 장면 콘티(러프 → 완성 그림)를 확인하고 승인하면 그 장면들을 이어 한 편으로 만듭니다."
+            )
+          );
+          modelWrap.appendChild(lenBlock);
+        }
+      }
+
+      // ---- "fal 에서 모델 가져오기" 블록 (버튼 + 펼침 패널) ----
+
+      // 지금 계획에 이미 등록된 fal endpointId 집합을 falUi.registered 에 담는다.
+      // videoModels 항목에는 endpointId 가 없고 id 가 "fal:<endpoint_id>" 이므로 접두어를 뗀다.
+      function syncRegistered() {
+        falUi.registered = {};
+        (plan.videoModels || []).forEach(function (item) {
+          if (item.provider === "fal" && String(item.id).indexOf("fal:") === 0) {
+            falUi.registered[String(item.id).slice(4)] = true;
+          }
         });
-        label.appendChild(radio);
-        label.appendChild(el("span", null, value + "초 (키 장면 " + (value / 5 + 1) + "장)"));
-        totalRow.appendChild(label);
-      });
-      modeBlock.appendChild(totalRow);
-      modeBlock.appendChild(
-        el("p", "vpoc-hint", "키 장면 방식은 Seedance 모델에서만 쓰입니다. 키 장면 간격은 5초입니다(Seedance 최소 4초).")
-      );
-      section.appendChild(modeBlock);
+      }
+
+      function falSection() {
+        var wrap = el("div", "vpoc-fal");
+        syncRegistered();
+
+        // configured 를 아직 모르면 GET /fal/models 로 한 번 확인한다.
+        if (falUi.configured === null) {
+          wrap.appendChild(el("p", "vpoc-hint", "fal 모델 정보를 확인하고 있어요\u2026"));
+          loadFalConfigured();
+          return wrap;
+        }
+        if (falUi.configured === false) {
+          wrap.appendChild(el("p", "vpoc-hint", "fal.ai API 키가 설정되지 않았습니다."));
+          return wrap;
+        }
+
+        var toggle = el("button", "vpoc-btn vpoc-btn-small", falUi.open ? "fal 카탈로그 닫기" : "fal 에서 모델 가져오기");
+        toggle.type = "button";
+        toggle.addEventListener("click", function () {
+          falUi.open = !falUi.open;
+          if (falUi.open && !falUi.models.length && !falUi.loading && !falUi.error) loadFalCatalog(false);
+          else drawModelPicker();
+        });
+        wrap.appendChild(toggle);
+
+        if (falUi.open) wrap.appendChild(falPanel());
+        return wrap;
+      }
+
+      function falPanel() {
+        var panel = el("div", "vpoc-fal-panel");
+
+        // 카테고리
+        var catBlock = el("div", "vpoc-field");
+        catBlock.appendChild(el("label", null, "종류"));
+        // 추가/해제가 진행 중이거나(동시에 하나만) 목록을 불러오는 중이면 컨트롤을 잠근다.
+        var busy = !!falUi.pending || falUi.loading || falUi.reloading;
+        // 성공 안내(초록/회색 힌트, 2초).
+        if (falUi.hint) {
+          var hintCls = falUi.hint.action === "add" ? "vpoc-fal-hint vpoc-fal-hint-add" : "vpoc-fal-hint";
+          var hintText =
+            falUi.hint.action === "add"
+              ? "\u2018" + falUi.hint.label + "\u2019 을(를) 영상 모델에 추가했습니다."
+              : "\u2018" + falUi.hint.label + "\u2019 을(를) 해제했습니다.";
+          panel.appendChild(el("div", hintCls, hintText));
+        }
+        var catRow = el("div", "vpoc-radios");
+        [
+          ["image-to-video", "이미지→영상"],
+          ["text-to-video", "텍스트→영상"],
+          ["video-to-video", "영상→영상"],
+          ["image-to-3d", "이미지→3D"],
+          ["text-to-3d", "텍스트→3D"]
+        ].forEach(function (pair) {
+          var label = el("label", "vpoc-radio");
+          var radio = el("input");
+          radio.type = "radio";
+          radio.name = "vpoc-fal-cat";
+          radio.checked = falUi.category === pair[0];
+          radio.disabled = busy;
+          radio.addEventListener("change", function () {
+            if (radio.checked) {
+              falUi.category = pair[0];
+              loadFalCatalog(false);
+            }
+          });
+          label.appendChild(radio);
+          label.appendChild(el("span", null, pair[1]));
+          catRow.appendChild(label);
+        });
+        catBlock.appendChild(catRow);
+        panel.appendChild(catBlock);
+
+        // 검색어 + 검색 버튼
+        var searchRow = el("div", "vpoc-fal-search");
+        var searchInput = el("input", "vpoc-input");
+        searchInput.type = "text";
+        searchInput.placeholder = "검색어 (선택)";
+        searchInput.value = falUi.query;
+        searchInput.disabled = busy;
+        searchInput.addEventListener("input", function () {
+          falUi.query = searchInput.value;
+        });
+        searchInput.addEventListener("keydown", function (event) {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            loadFalCatalog(false);
+          }
+        });
+        var searchBtn = el("button", "vpoc-btn vpoc-btn-small", "검색");
+        searchBtn.type = "button";
+        searchBtn.disabled = busy;
+        searchBtn.addEventListener("click", function () {
+          loadFalCatalog(false);
+        });
+        searchRow.appendChild(searchInput);
+        searchRow.appendChild(searchBtn);
+        panel.appendChild(searchRow);
+
+        if (falUi.error) {
+          var errBox = el("div", "vpoc-error");
+          errBox.textContent = falErrorText(falUi.error);
+          panel.appendChild(errBox);
+        }
+
+        // 결과 목록. "더 보기" 로딩 중에는 기존 목록을 지우지 않는다.
+        var list = el("div", "vpoc-fal-list");
+        falUi.models.forEach(function (model) {
+          list.appendChild(falCard(model, busy));
+        });
+        if (!falUi.loading && !falUi.loadingMore && !falUi.models.length && !falUi.error) {
+          list.appendChild(el("p", "vpoc-hint", "결과가 없습니다."));
+        }
+        panel.appendChild(list);
+
+        // 전체(재)조회 로딩 — 목록이 비는 구간. "더 보기" 로딩은 아래에서 따로 표시.
+        if (falUi.loading && !falUi.loadingMore) {
+          var loadingRow = el("div", "vpoc-fal-loading");
+          loadingRow.appendChild(el("div", "vpoc-spinner"));
+          loadingRow.appendChild(el("span", null, "fal 카탈로그를 불러오는 중\u2026"));
+          panel.appendChild(loadingRow);
+        }
+
+        // "더 보기" 로딩 — 기존 목록 아래에 표시.
+        if (falUi.loadingMore) {
+          var moreLoading = el("div", "vpoc-fal-loading");
+          moreLoading.appendChild(el("div", "vpoc-spinner"));
+          moreLoading.appendChild(el("span", null, "더 불러오는 중\u2026"));
+          panel.appendChild(moreLoading);
+        }
+
+        if (falUi.hasMore && !falUi.loading && !falUi.loadingMore) {
+          var more = el("button", "vpoc-btn vpoc-btn-small", "더 보기");
+          more.type = "button";
+          more.disabled = busy;
+          more.addEventListener("click", function () {
+            loadFalCatalog(true);
+          });
+          panel.appendChild(more);
+        }
+
+        return panel;
+      }
+
+      function falCard(model, busy) {
+        var card = el("div", "vpoc-fal-card");
+        if (model.thumbnailUrl) {
+          var thumb = el("img", "vpoc-fal-thumb");
+          thumb.src = model.thumbnailUrl;
+          thumb.alt = "";
+          card.appendChild(thumb);
+        }
+        var body = el("div", "vpoc-fal-body");
+        body.appendChild(el("p", "vpoc-fal-name", model.label || model.endpointId));
+        body.appendChild(el("p", "vpoc-fal-eid", model.endpointId));
+        if (model.description) body.appendChild(el("p", "vpoc-fal-desc", model.description));
+        card.appendChild(body);
+
+        // 이 항목이 지금 추가/해제 진행 중인가.
+        var pending = falUi.pending;
+        var pendingAdd = pending && pending.endpointId === model.endpointId && pending.action === "add";
+        var pendingRemove = pending && pending.endpointId === model.endpointId && pending.action === "remove";
+
+        var actions = el("div", "vpoc-fal-actions");
+        var registered = !!falUi.registered[model.endpointId];
+        if (pendingAdd) {
+          // 추가 중 — 버튼을 스피너+문구로 바꿔 비활성.
+          actions.appendChild(falBusyButton("추가 중\u2026"));
+        } else if (pendingRemove) {
+          actions.appendChild(el("span", "vpoc-fal-registered", "등록됨"));
+          actions.appendChild(falBusyButton("해제 중\u2026"));
+        } else if (registered) {
+          actions.appendChild(el("span", "vpoc-fal-registered", "등록됨"));
+          var remove = el("button", "vpoc-btn vpoc-btn-small", "해제");
+          remove.type = "button";
+          remove.disabled = busy; // 다른 항목이 진행 중이면 잠근다.
+          remove.addEventListener("click", function () {
+            unregisterFalModel(model.endpointId);
+          });
+          actions.appendChild(remove);
+        } else if (!falUi.usable) {
+          actions.appendChild(el("span", "vpoc-fal-blocked", "영상 단계 사용 불가"));
+        } else {
+          var add = el("button", "vpoc-btn vpoc-btn-small vpoc-btn-primary", "추가");
+          add.type = "button";
+          add.disabled = busy; // 다른 항목이 진행 중이면 잠근다.
+          add.addEventListener("click", function () {
+            registerFalModel(model.endpointId);
+          });
+          actions.appendChild(add);
+        }
+        card.appendChild(actions);
+
+        // 이 항목의 실패 사유(서버 오류 원문)를 카드 아래 빨간 글씨로.
+        if (falUi.itemError && falUi.itemError.endpointId === model.endpointId) {
+          card.appendChild(el("p", "vpoc-fal-item-error", falErrorText(falUi.itemError.error)));
+        }
+        return card;
+      }
+
+      // 진행 중 버튼 — 스피너 + 문구, 비활성.
+      function falBusyButton(text) {
+        var btn = el("button", "vpoc-btn vpoc-btn-small vpoc-fal-busy-btn");
+        btn.type = "button";
+        btn.disabled = true;
+        btn.appendChild(el("div", "vpoc-spinner"));
+        btn.appendChild(el("span", null, text));
+        return btn;
+      }
+
+      // ---- fal 통신. 모두 state.mock 이면 건너뛴다. ----
+
+      function falErrorText(error) {
+        if (!error) return "";
+        return String((error.message || "오류") + (error.where ? " (" + error.where + ")" : ""));
+      }
+
+      function loadFalConfigured() {
+        if (state.mock) {
+          falUi.configured = false;
+          return;
+        }
+        api("/api/vpoc/fal/models")
+          .then(function (payload) {
+            falUi.configured = !!payload.configured;
+            drawModelPicker();
+          })
+          .catch(function (error) {
+            // 피커 자체가 꺼져 있거나 접근 불가면 버튼을 숨긴다(안내로 대체하지 않는다).
+            falUi.configured = false;
+            falUi.error = error;
+            drawModelPicker();
+          });
+      }
+
+      function loadFalCatalog(append) {
+        if (state.mock) return;
+        falUi.loading = true;
+        falUi.loadingMore = !!append; // "더 보기"면 기존 목록을 유지하고 아래에 표시한다.
+        falUi.error = null;
+        if (!append) {
+          falUi.models = [];
+          falUi.nextCursor = "";
+          falUi.hasMore = false;
+        }
+        drawModelPicker();
+        var path =
+          "/api/vpoc/fal/catalog?category=" + encodeURIComponent(falUi.category) +
+          "&q=" + encodeURIComponent(falUi.query || "") +
+          "&cursor=" + encodeURIComponent(append ? falUi.nextCursor || "" : "");
+        api(path)
+          .then(function (payload) {
+            var incoming = payload.models || [];
+            falUi.models = append ? falUi.models.concat(incoming) : incoming;
+            falUi.nextCursor = payload.nextCursor || "";
+            falUi.hasMore = !!payload.hasMore;
+            falUi.usable = !!payload.usable;
+            falUi.loading = false;
+            falUi.loadingMore = false;
+            drawModelPicker();
+          })
+          .catch(function (error) {
+            falUi.loading = false;
+            falUi.loadingMore = false;
+            falUi.error = error;
+            drawModelPicker();
+          });
+      }
+
+      // 카탈로그 목록에서 이 endpointId 의 표시 이름을 찾는다(안내 문구용).
+      function falModelLabel(endpointId) {
+        var found = null;
+        falUi.models.forEach(function (model) {
+          if (model.endpointId === endpointId) found = model.label || model.endpointId;
+        });
+        return found || endpointId;
+      }
+
+      // 성공 안내를 띄우고 2초 뒤에 지운다.
+      function showFalHint(action, label) {
+        falUi.hint = { action: action, label: label };
+        if (falHintTimer) clearTimeout(falHintTimer);
+        falHintTimer = setTimeout(function () {
+          falHintTimer = null;
+          falUi.hint = null;
+          drawModelPicker();
+        }, 2000);
+      }
+
+      function registerFalModel(endpointId) {
+        if (state.mock) return;
+        if (falUi.pending) return; // 동시에 하나만.
+        falUi.error = null;
+        falUi.itemError = null;
+        falUi.pending = { endpointId: endpointId, action: "add" };
+        var label = falModelLabel(endpointId);
+        drawModelPicker();
+        api("/api/vpoc/fal/models", {
+          method: "POST",
+          body: JSON.stringify({ endpointId: endpointId })
+        })
+          .then(function () {
+            falUi.pending = null;
+            return reloadVideoModels("add", label);
+          })
+          .catch(function (error) {
+            // 실패 — 버튼을 원래대로 되돌리고 그 항목 아래에 서버 오류 원문.
+            falUi.pending = null;
+            falUi.itemError = { endpointId: endpointId, error: error };
+            drawModelPicker();
+          });
+      }
+
+      function unregisterFalModel(endpointId) {
+        if (state.mock) return;
+        if (falUi.pending) return; // 동시에 하나만.
+        falUi.error = null;
+        falUi.itemError = null;
+        falUi.pending = { endpointId: endpointId, action: "remove" };
+        var label = falModelLabel(endpointId);
+        drawModelPicker();
+        // endpoint_id 에 "/" 가 들어가므로 encode 하지 않고 그대로 경로에 붙인다.
+        api("/api/vpoc/fal/models/" + endpointId, { method: "DELETE" })
+          .then(function () {
+            falUi.pending = null;
+            return reloadVideoModels("remove", label);
+          })
+          .catch(function (error) {
+            falUi.pending = null;
+            falUi.itemError = { endpointId: endpointId, error: error };
+            drawModelPicker();
+          });
+      }
+
+      // 계획을 다시 받아 plan.videoModels 만 교체하고 이 블록만 다시 그린다.
+      // 전체 refresh 를 하면 renderStep2 가 edits 를 새로 만들어 입력이 날아간다.
+      // action/label 이 있으면 갱신이 끝난 뒤 성공 안내를 띄운다.
+      function reloadVideoModels(action, label) {
+        falUi.reloading = true; // 영상 모델 라디오 목록 위에 "모델 목록 갱신 중…".
+        drawModelPicker();
+        return api(
+          "/api/vpoc/p/" + encodeURIComponent(state.projectId) +
+            "/plans/" + encodeURIComponent(state.planId)
+        )
+          .then(function (payload) {
+            state.plan = payload;
+            plan.videoModels = payload.videoModels || [];
+            // 지금 고른 모델이 해제돼 사라졌으면 서버가 정한 값으로 되돌린다.
+            var ids = {};
+            plan.videoModels.forEach(function (item) {
+              ids[item.id] = true;
+            });
+            if (edits.videoModel && !ids[edits.videoModel]) edits.videoModel = null;
+            falUi.reloading = false;
+            if (action) showFalHint(action, label);
+            drawModelPicker();
+            return payload;
+          })
+          .catch(function (error) {
+            falUi.reloading = false;
+            falUi.error = error;
+            drawModelPicker();
+          });
+      }
     }
 
     /* 캐릭터 시트 */
@@ -830,9 +1288,283 @@
 
   /* ---------------------------------------------------------------- ③ 계획 승인 */
 
+  /* 영상 1개(single, 설계자 2026-10-19): ③ 화면을 "영상 프롬프트 + 고정 인물 + 고정 배경 +
+     미리보기 콘티"로 보여 준다. 영상 하나 = 프롬프트 하나다. 미리보기 그림은 확인용이고, 수정 없이
+     승인하면 그 프롬프트(masterPromptEn) 그대로 영상이 만들어진다. 인물·배경은 각각 별도 프롬프트와
+     사진으로 고정해 영상 내내 같은 모습을 유지한다. 옛 계획(keyframes/shots)은 renderStep3 가 맡는다.
+     저장은 기존 ③ 흐름(PUT steps/3)으로 master 수정분만 보낸다(routes.py 가 받는 모양:
+     master.background.promptEn|descKo · master.characters[].{id,promptEn} · master.beats[].{id,actionEn,cameraEn,descKo}). */
+  function renderStep3Single(host) {
+    var plan = state.plan;
+    var step = plan.steps["3"];
+    var step2 = plan.steps["2"];
+    var editable = plan.canEdit;
+    var master = step.master || {};
+    var sheetById = {};
+    (step2.characters || []).forEach(function (item) {
+      sheetById[item.id] = item;
+    });
+    // 미리보기 콘티 썸네일을 beatId 로 찾는다(keyframes 배열 재사용).
+    var kfByBeat = {};
+    (step.keyframes || []).forEach(function (kf) {
+      kfByBeat[kf.beatId] = kf;
+    });
+
+    // 저장 전에 모아 두는 수정분. 저장할 때 master 모양으로 보낸다.
+    var bgEdits = {};
+    var charEdits = {};
+    var beatEdits = {};
+
+    var section = el("section", "vpoc-card");
+    section.appendChild(el("h2", null, "\u2462 이렇게 만들까요?"));
+    if (step.status === "stale") {
+      section.appendChild(el("p", "vpoc-stale", "앞 단계를 고쳤습니다. 다시 만들어야 합니다."));
+    }
+
+    /* 1. 영상 프롬프트 — 이대로 영상이 만들어진다. 읽기 전용, 기본 접힘(3줄). */
+    var promptBox = el("details", "vpoc-master-prompt");
+    var promptSummary = el("summary", null, "영상 프롬프트 (이대로 영상이 만들어집니다)");
+    promptBox.appendChild(promptSummary);
+    var promptArea = el("textarea", "vpoc-input vpoc-master-prompt-text");
+    promptArea.rows = 3;
+    promptArea.readOnly = true;
+    promptArea.value = step.masterPromptEn || "";
+    promptBox.appendChild(promptArea);
+    section.appendChild(promptBox);
+    section.appendChild(
+      el(
+        "p",
+        "vpoc-hint",
+        "아래 인물·배경·장면을 고치면 이 프롬프트가 바뀝니다. 그림은 미리보기이며 영상에 그대로 붙지 않습니다."
+      )
+    );
+
+    /* 2. 인물 (고정) — 인물마다 사진 · 이름 · 외모 프롬프트(영어) 편집. */
+    section.appendChild(el("h3", null, "인물 (고정)"));
+    section.appendChild(el("p", "vpoc-hint", "영상 내내 이 모습으로 유지됩니다."));
+    var charCards = el("div", "vpoc-cards");
+    (master.characters || []).forEach(function (mchar) {
+      var sheet = sheetById[mchar.id] || {};
+      var card = el("div", "vpoc-imagecard");
+      if (mchar.imageUrl) {
+        var img = el("img");
+        img.src = mchar.imageUrl;
+        img.alt = (sheet.nameKo || mchar.handleEn || mchar.id) + " 인물 사진";
+        card.appendChild(img);
+      } else {
+        card.appendChild(el("div", "vpoc-imageph", "준비 중"));
+      }
+      card.appendChild(el("strong", null, sheet.nameKo || mchar.handleEn || mchar.id));
+      var field = el("div", "vpoc-field");
+      field.appendChild(el("label", null, "외모 프롬프트 (영어)"));
+      var area = el("textarea", "vpoc-input");
+      area.rows = 3;
+      area.value = mchar.promptEn || "";
+      area.disabled = !editable;
+      area.addEventListener("input", function () {
+        charEdits[mchar.id] = area.value;
+      });
+      field.appendChild(area);
+      card.appendChild(field);
+      if (editable) {
+        // 인물 사진 다시 그리기 — 기존 ③ 인물 다시 그리기(charId)를 그대로 쓴다.
+        var redraw = el("button", "vpoc-btn vpoc-btn-small", "다시 그리기");
+        redraw.type = "button";
+        redraw.disabled = state.busy;
+        redraw.addEventListener("click", function () {
+          runAction("redraw", { charId: mchar.id });
+        });
+        card.appendChild(redraw);
+      }
+      charCards.appendChild(card);
+    });
+    section.appendChild(charCards);
+
+    /* 3. 배경 (고정) — 배경 그림 · 한국어 설명 · 배경 프롬프트(영어) 편집 · 배경 다시 그리기. */
+    section.appendChild(el("h3", null, "배경 (고정)"));
+    var background = master.background || {};
+    var bgCard = el("div", "vpoc-single-bg");
+    var bgStatus = background.status || "ready";
+    if (background.imageUrl) {
+      var bgImg = el("img", "vpoc-single-bg-img");
+      bgImg.src = background.imageUrl;
+      bgImg.alt = "배경 그림";
+      bgCard.appendChild(bgImg);
+    } else if (bgStatus === "failed") {
+      bgCard.appendChild(el("div", "vpoc-imageph", "그림 실패"));
+    } else {
+      // 그리는 중 · stale(수정됨) — 스피너 + 문구.
+      var ph = el("div", "vpoc-imageph vpoc-single-bg-ph");
+      ph.appendChild(el("span", "vpoc-spinner"));
+      ph.appendChild(el("span", null, "그리는 중\u2026"));
+      bgCard.appendChild(ph);
+    }
+    if (background.status === "stale") {
+      bgCard.appendChild(el("span", "vpoc-badge vpoc-badge-stale", "수정됨 · 다시 그리기 권장"));
+    }
+    if (background.error) bgCard.appendChild(errorBox(background.error, null));
+    if (background.descKo) bgCard.appendChild(el("p", "vpoc-hint", background.descKo));
+    var bgField = el("div", "vpoc-field");
+    bgField.appendChild(el("label", null, "배경 프롬프트 (영어)"));
+    var bgArea = el("textarea", "vpoc-input");
+    bgArea.rows = 3;
+    bgArea.value = background.promptEn || "";
+    bgArea.disabled = !editable;
+    bgArea.addEventListener("input", function () {
+      bgEdits.promptEn = bgArea.value;
+    });
+    bgField.appendChild(bgArea);
+    bgCard.appendChild(bgField);
+    if (editable) {
+      var bgRedraw = el("button", "vpoc-btn vpoc-btn-small", "배경 다시 그리기");
+      bgRedraw.type = "button";
+      bgRedraw.disabled = state.busy;
+      bgRedraw.addEventListener("click", function () {
+        runAction("redraw", { target: "background" });
+      });
+      bgCard.appendChild(bgRedraw);
+    }
+    section.appendChild(bgCard);
+
+    /* 4. 장면 (시간 순서) — 비트마다 시간 · 미리보기 그림 · 한국어 설명 · 동작/카메라 편집. */
+    section.appendChild(el("h3", null, "장면 (시간 순서)"));
+    section.appendChild(
+      el("p", "vpoc-hint", "미리보기 그림입니다. 영상에 그대로 붙지 않습니다. 동작·카메라를 고치면 영상 프롬프트가 바뀝니다.")
+    );
+    var beatList = el("div", "vpoc-shots");
+    (master.beats || []).forEach(function (beat, index) {
+      var row = el("div", "vpoc-shot vpoc-single-beat");
+      var t0 = Math.round(Number(beat.t0) || 0);
+      var t1 = Math.round(Number(beat.t1) || t0);
+      row.appendChild(el("span", "vpoc-shot-no", t0 + "~" + t1 + "초"));
+      var body = el("div", "vpoc-shot-body");
+
+      var kf = kfByBeat[beat.id] || {};
+      var shown = (kf.rough && kf.rough.url) || (kf.final && kf.final.url);
+      var frame = el("div", "vpoc-single-beat-frame");
+      if (shown) {
+        var frImg = el("img");
+        frImg.src = shown;
+        frImg.alt = t0 + "~" + t1 + "초 미리보기";
+        frame.appendChild(frImg);
+      } else if ((kf.rough || {}).status === "error") {
+        frame.appendChild(el("div", "vpoc-imageph", "그림 없음"));
+      } else {
+        var frPh = el("div", "vpoc-imageph vpoc-single-bg-ph");
+        frPh.appendChild(el("span", "vpoc-spinner"));
+        frPh.appendChild(el("span", null, "그리는 중\u2026"));
+        frame.appendChild(frPh);
+      }
+      body.appendChild(frame);
+      if (kf.stale) {
+        body.appendChild(el("span", "vpoc-badge vpoc-badge-stale", "수정됨 · 다시 그리기 권장"));
+      }
+      if ((kf.rough || {}).error) body.appendChild(errorBox(kf.rough.error, null));
+      body.appendChild(el("p", "vpoc-shot-summary", beat.descKo || ""));
+      var cast = el("p", "vpoc-shot-meta");
+      (beat.characters || []).forEach(function (cid) {
+        cast.appendChild(el("span", "vpoc-chip", (sheetById[cid] || {}).nameKo || cid));
+      });
+      body.appendChild(cast);
+
+      var actField = el("div", "vpoc-field");
+      actField.appendChild(el("label", null, "동작 (영어)"));
+      var actArea = el("textarea", "vpoc-input");
+      actArea.rows = 2;
+      actArea.value = beat.actionEn || "";
+      actArea.disabled = !editable;
+      actArea.addEventListener("input", function () {
+        beatEdits[beat.id] = beatEdits[beat.id] || { id: beat.id };
+        beatEdits[beat.id].actionEn = actArea.value;
+      });
+      actField.appendChild(actArea);
+      body.appendChild(actField);
+
+      var camField = el("div", "vpoc-field");
+      camField.appendChild(el("label", null, "카메라 (영어)"));
+      var camArea = el("textarea", "vpoc-input");
+      camArea.rows = 2;
+      camArea.value = beat.cameraEn || "";
+      camArea.disabled = !editable;
+      camArea.addEventListener("input", function () {
+        beatEdits[beat.id] = beatEdits[beat.id] || { id: beat.id };
+        beatEdits[beat.id].cameraEn = camArea.value;
+      });
+      camField.appendChild(camArea);
+      body.appendChild(camField);
+
+      if (editable) {
+        var kfId = kf.id;
+        var again = el("button", "vpoc-btn vpoc-btn-small", "미리보기 다시 그리기");
+        again.type = "button";
+        again.disabled = state.busy || !kfId;
+        again.addEventListener("click", function () {
+          runAction("redraw", { keyframeId: kfId });
+        });
+        body.appendChild(again);
+      }
+      row.appendChild(body);
+      beatList.appendChild(row);
+    });
+    section.appendChild(beatList);
+
+    /* 만들 분량 — 금액은 보이지 않는다(설계자 2026-10-07, admin 모델 관리에서만 본다). */
+    section.appendChild(el("p", "vpoc-cost", costLabel(plan, step.cost || {})));
+
+    /* 5·6. 저장 + 승인. 승인 위에 "영상 길이 N초 · 모델 X" 요약. */
+    if (editable) {
+      var totalS = step.singleTotalS || (master.totalS || 0);
+      var modelLabel = plan.videoModel || "";
+      (plan.videoModels || []).forEach(function (item) {
+        if (item.id === plan.videoModel) modelLabel = item.label || modelLabel;
+      });
+      section.appendChild(
+        el("p", "vpoc-single-summary", "영상 길이 " + totalS + "초 \u00b7 모델 " + modelLabel)
+      );
+
+      var approve = el("button", "vpoc-btn vpoc-btn-primary vpoc-btn-run", "이 프롬프트로 영상 만들기");
+      approve.type = "button";
+      approve.disabled = state.busy;
+      approve.addEventListener("click", function () {
+        // master 수정분만 보낸다(routes.py 가 받는 모양). 저장 뒤 화면이 새 프롬프트로 갱신된다.
+        var masterBody = { background: {}, characters: [], beats: [] };
+        if (bgEdits.promptEn !== undefined) masterBody.background.promptEn = bgEdits.promptEn;
+        Object.keys(charEdits).forEach(function (id) {
+          masterBody.characters.push({ id: id, promptEn: charEdits[id] });
+        });
+        Object.keys(beatEdits).forEach(function (id) {
+          masterBody.beats.push(beatEdits[id]);
+        });
+        saveStep(3, { master: masterBody })
+          .then(function () {
+            var current = state.plan.steps["3"].cost || {};
+            confirmModal(
+              "영상을 만들까요?",
+              [
+                "이 프롬프트 그대로 영상 1개를 만듭니다.",
+                "시작하면 취소할 수 없습니다."
+              ],
+              "시작",
+              function () {
+                runAction("generate", { confirmUsd: current.totalUsd });
+              }
+            );
+          });
+      });
+      section.appendChild(approve);
+    }
+    host.appendChild(section);
+  }
+
   function renderStep3(host) {
     var plan = state.plan;
     var step = plan.steps["3"];
+    // 영상 1개(single, 설계자 2026-10-19): ③ 은 "마스터 프롬프트 + 고정 인물 + 고정 배경 + 미리보기
+    // 콘티"로 다시 짠다. 옛 계획(makeMode=keyframes/shots)은 아래 기존 경로를 그대로 쓴다.
+    if (step.makeMode === "single" && step.master) {
+      renderStep3Single(host);
+      return;
+    }
     var step2 = plan.steps["2"];
     var editable = plan.canEdit;
     var sheetById = {};
@@ -881,10 +1613,19 @@
     });
     section.appendChild(cards);
 
-    /* 키 장면 콘티(설계자 2026-10-14) — 5초마다 러프 스케치. 설명을 고쳐 다시 그릴 수 있다. */
-    var keyframeMode = step.makeMode === "keyframes";
+    /* 키 장면 콘티(설계자 2026-10-14/2026-10-19) — 러프 스케치. 설명을 고쳐 다시 그릴 수 있다.
+       single(영상 1개) · keyframes(옛) 둘 다 키 장면 콘티를 쓴다. */
+    var singleMode = step.makeMode === "single";
+    var keyframeMode = step.makeMode === "keyframes" || singleMode;
     if (keyframeMode) {
-      section.appendChild(el("h3", null, "키 장면 콘티 " + (step.keyframes || []).length + "장 (5초 간격)"));
+      section.appendChild(
+        el(
+          "h3",
+          null,
+          "키 장면 콘티 " + (step.keyframes || []).length + "장" +
+            (singleMode && step.singleTotalS ? " (영상 " + step.singleTotalS + "초)" : " (5초 간격)")
+        )
+      );
       section.appendChild(
         el("p", "vpoc-hint", "러프 스케치입니다. 승인하면 인물 그림과 웹툰 화풍을 입혀 완성 그림으로 그린 뒤, 장면 사이를 영상으로 잇습니다.")
       );
@@ -951,7 +1692,9 @@
       el(
         "p",
         "vpoc-hint",
-        options.durationFixed
+        singleMode
+          ? "영상 길이: " + (step.singleTotalS || options.maxDurationS) + "초 (②에서 고른 길이로 한 번에 만듭니다)"
+          : options.durationFixed
           ? "샷 길이: " + options.maxDurationS + "초 고정 (이 모델의 최대)"
           : "샷 길이: 샷마다 " + options.minDurationS + "~" + options.maxDurationS + "초 사이로 정할 수 있습니다."
       )
@@ -1003,12 +1746,33 @@
         settingsBlock.appendChild(takeDetails);
       }
     }
+    /* 영상 1개(single, 설계자 2026-10-19): 완성 키 장면을 시간 순서로 이어 한 편을 만든다.
+       한 번에 보낼 최종 프롬프트(참고 이미지 = 완성 키 장면)를 펼쳐 볼 수 있다. */
+    if (singleMode && step.single && step.singlePromptEn) {
+      var singleDetails = el("details", "vpoc-advanced");
+      singleDetails.appendChild(
+        el("summary", null, "한 번에 보낼 최종 프롬프트 · 참고 이미지(완성 키 장면) " + (step.singleReferenceCount || 0) + "장")
+      );
+      var singleArea = el("textarea", "vpoc-input");
+      singleArea.rows = 8;
+      singleArea.readOnly = true;
+      singleArea.value = step.singlePromptEn;
+      singleDetails.appendChild(singleArea);
+      settingsBlock.appendChild(singleDetails);
+    }
     // dev 전용(설계자 2026-10-07 "개발까지만"): 모델 고르기가 꺼진 배포(운영)에서는 보이지 않는다.
     if (plan.modelPicker) section.appendChild(settingsBlock);
     var durationEdits = {};
 
     /* 샷 목록 */
-    section.appendChild(el("h3", null, "샷 " + (step.shots || []).length + "개"));
+    section.appendChild(
+      el(
+        "h3",
+        null,
+        (keyframeMode ? "구간 " : "샷 ") + (step.shots || []).length + "개" +
+          (singleMode ? " (키 장면 사이 움직임 — 한 편으로 이어서 만듭니다)" : "")
+      )
+    );
     var list = el("div", "vpoc-shots");
     (step.shots || []).forEach(function (shot, index) {
       var row = el("div", "vpoc-shot");
@@ -1093,7 +1857,7 @@
       var approve = el(
         "button",
         "vpoc-btn vpoc-btn-primary vpoc-btn-run",
-        "승인하고 영상 만들기 · " + (cost.shots || 0) + "샷"
+        singleMode ? "승인하고 영상 만들기 · 영상 1개" : "승인하고 영상 만들기 · " + (cost.shots || 0) + "샷"
       );
       approve.type = "button";
       approve.disabled = state.busy || blocked;
@@ -1165,6 +1929,8 @@
   function renderStep4(host) {
     var plan = state.plan;
     var step = plan.steps["4"];
+    // 영상 1개(single) · 옛 한 번에 이어서(oneTake)는 작업이 하나다("take").
+    var singleMode = Boolean(step.single);
     var strip = keyframeStrip(plan);
     if (strip) host.appendChild(strip);
     var step3 = plan.steps["3"];
@@ -1181,40 +1947,52 @@
     });
 
     if ((step.final || {}).url) {
-      section.appendChild(el("h3", null, "합본"));
+      // single 은 영상이 곧 최종본이다("합본"이 아니라 "최종 영상").
+      section.appendChild(el("h3", null, singleMode ? "최종 영상" : "합본"));
       section.appendChild(videoTag((step.final || {}).url, false, "final"));
       var download = el("a", "vpoc-btn", "내려받기");
       download.href = (step.final || {}).url;
       download.setAttribute("download", "video.mp4");
       section.appendChild(download);
     } else if (done.length) {
-      section.appendChild(el("h3", null, "순서대로 재생"));
+      section.appendChild(el("h3", null, singleMode ? "완성 영상" : "순서대로 재생"));
       section.appendChild(sequencePlayer(done));
-      if (plan.canEdit && step.status === "done") {
+      if (plan.canEdit && step.status === "done" && !singleMode) {
+        // single 은 클립이 하나뿐이라 이어 붙이기가 필요 없다(run/stitch 가 1개를 그대로 final 로).
         var stitchButton = el("button", "vpoc-btn", "하나로 이어 붙이기");
         stitchButton.type = "button";
         stitchButton.addEventListener("click", function () {
           runAction("stitch", {});
         });
         section.appendChild(stitchButton);
+      } else if (plan.canEdit && step.status === "done" && singleMode) {
+        // 완료되면 그 영상 1개를 그대로 최종 영상으로 만든다(기존 stitcher 의 1개 처리).
+        var makeFinal = el("button", "vpoc-btn", "최종 영상으로 저장");
+        makeFinal.type = "button";
+        makeFinal.addEventListener("click", function () {
+          runAction("stitch", {});
+        });
+        section.appendChild(makeFinal);
       }
     }
 
     var list = el("div", "vpoc-shots");
     (step.shots || []).forEach(function (shot, index) {
       var row = el("div", "vpoc-shot");
+      var isTake = (Boolean(step.oneTake) || singleMode) && shot.id === "take";
+      if (singleMode && isTake) row.classList.add("vpoc-single-card");
       row.appendChild(el("span", "vpoc-shot-no", String(index + 1)));
       var body = el("div", "vpoc-shot-body");
-      var isTake = Boolean(step.oneTake) && shot.id === "take";
       body.appendChild(
         el(
           "p",
           "vpoc-shot-summary",
           isTake
-            ? "한 번에 이어서 만든 영상 · 샷 " + (step3.shots || []).length + "개 · " +
+            ? "영상 1개 · " + (step.single ? (plan.steps["3"].singleTotalS || shot.durationS || "") + "초" :
+              ((step3.shots || []).length + "개 샷 · " +
               (step3.shots || []).reduce(function (sum, item) {
                 return sum + (item.durationS || 5);
-              }, 0) + "초"
+              }, 0) + "초"))
             : summaryById[shot.id] || shot.id
         )
       );
@@ -1227,7 +2005,8 @@
         failed: "실패"
       }[shot.status] || shot.status;
       if (shot.status === "submitted") {
-        text += " " + mmss(shot.elapsedS) + " \u00b7 보통 2~5분";
+        // 길이에 따라 더 걸릴 수 있다는 일반 문구(설계자 2026-10-19). 긴 영상일수록 오래 걸린다.
+        text += " " + mmss(shot.elapsedS) + " \u00b7 영상 길이에 따라 몇 분 걸릴 수 있어요";
         if (shot.elapsedS > 600) text += " \u00b7 평소보다 오래 걸려요";
       } else if (shot.status === "completed") {
         text += " " + mmss(shot.elapsedS);
@@ -1259,9 +2038,41 @@
         }
       }
       // vpoc-regen: "이 샷만 의견 반영해 다시 만들기". 위 요소는 건드리지 않고 아래에 덧붙인다.
-      // 한 번에 만든 영상은 샷 하나만 고칠 수 없다 — ③ 을 고쳐 다시 승인한다.
+      // 영상 1개(single)·옛 한 번에 만든 영상은 샷 하나만 따로 고칠 수 없다.
       if (isTake) {
-        body.appendChild(el("p", "vpoc-hint", "고치려면 ③ 계획 승인에서 샷 내용을 바꿔 다시 승인해 주세요."));
+        if (singleMode && plan.canEdit && (shot.status === "completed" || shot.status === "failed")) {
+          // 이 영상 1개를 통째로 다시 만든다(③ 계획 그대로 재생성). 의견은 ③ 키 장면/구간을 고쳐 반영한다.
+          var remake = el("button", "vpoc-btn vpoc-btn-small", "이 영상 다시 만들기");
+          remake.type = "button";
+          remake.disabled = state.busy;
+          remake.addEventListener("click", function () {
+            var current = (plan.steps["3"] || {}).cost || {};
+            confirmModal(
+              "이 영상을 다시 만들까요?",
+              ["같은 계획으로 영상 1개를 다시 만듭니다.", "의견을 반영하려면 ③에서 키 장면·구간을 고친 뒤 다시 승인해 주세요."],
+              "다시 만들기",
+              function () {
+                runAction("generate", { confirmUsd: current.totalUsd });
+              }
+            );
+          });
+          body.appendChild(remake);
+        }
+        // 보낸 프롬프트(설계자 2026-10-19): 승인한 프롬프트 그대로 영상이 만들어졌음을 확인하는 상자.
+        // 작업의 sentPromptEn 이 있으면 그것(실제로 보낸 문장), 없으면 ③ 의 영상 프롬프트(masterPromptEn)로
+        // 되돌린다 — 현재 _shot4_view 가 sentPromptEn 을 내려 주지 않기 때문이다(결과 보고 참고).
+        var sentEn = shot.sentPromptEn || (singleMode ? (step3 || {}).masterPromptEn : "") || "";
+        if (sentEn) {
+          var sentBox = el("details", "vpoc-advanced");
+          sentBox.appendChild(el("summary", null, "보낸 프롬프트"));
+          var sentArea = el("textarea", "vpoc-input");
+          sentArea.rows = 6;
+          sentArea.readOnly = true;
+          sentArea.value = sentEn;
+          sentBox.appendChild(sentArea);
+          body.appendChild(sentBox);
+        }
+        body.appendChild(el("p", "vpoc-hint", "의견을 반영하려면 ③ 계획 승인에서 키 장면·구간 내용을 바꿔 다시 승인해 주세요."));
       } else {
         vpocRegenAttach(body, shot, plan);
       }
@@ -1272,9 +2083,9 @@
 
     if ((step.final || {}).status === "stale") {
       var staleBand = el("div", "vpoc-regen-stale");
-      staleBand.appendChild(el("span", null, "합본이 이전 버전입니다."));
+      staleBand.appendChild(el("span", null, singleMode ? "최종 영상이 이전 버전입니다." : "합본이 이전 버전입니다."));
       if (plan.canEdit) {
-        var again = el("button", "vpoc-btn vpoc-btn-small", "다시 이어 붙이기");
+        var again = el("button", "vpoc-btn vpoc-btn-small", singleMode ? "최종 영상 다시 만들기" : "다시 이어 붙이기");
         again.type = "button";
         again.addEventListener("click", function () {
           runAction("stitch", {});
@@ -1315,6 +2126,30 @@
 
   // 샷별로 펼침 상태와 입력값을 기억한다. 조회로 화면을 다시 그려도 입력이 사라지지 않는다.
   var regenUi = {};
+
+  // ② "fal 에서 모델 가져오기" 패널 상태. 모듈 전역이라 ② 블록을 다시 그려도 유지된다.
+  // configured 는 GET /fal/models 로 처음 한 번 확인한다(null = 아직 모름).
+  var falUi = {
+    open: false,
+    configured: null,
+    category: "image-to-video",
+    query: "",
+    models: [],
+    nextCursor: "",
+    hasMore: false,
+    usable: true,
+    loading: false,
+    loadingMore: false, // "더 보기" 전용 로딩(기존 목록은 지우지 않는다)
+    error: null,
+    pending: null,      // 진행 중인 추가/해제 { endpointId, action: "add"|"remove" } — 다시 그려도 유지
+    itemError: null,    // 항목별 실패 { endpointId, error }
+    reloading: false,   // 추가/해제 성공 후 영상 모델 라디오 목록 갱신 중
+    hint: null,         // 성공 안내 { action: "add"|"remove", label } — 2초간 표시
+    registered: {} // endpointId -> true (등록된 fal 모델)
+  };
+
+  // 성공 안내(falUi.hint)를 2초 뒤에 지우는 타이머. 패널을 다시 그려도 하나만 돈다.
+  var falHintTimer = null;
 
   function regenState(shotId) {
     if (!regenUi[shotId]) {
